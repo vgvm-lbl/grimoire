@@ -24,6 +24,7 @@
 const minimist              = require('minimist')
 const { loadGraph }         = require('../lib/graph')
 const { requireMode }       = require('../lib/env')
+const { TAGS, suggestTags } = require('../lib/tags')
 
 // ── Search ───────────────────────────────────────────────────────────────────
 
@@ -58,30 +59,52 @@ function search(graph, { query, tag, type, depth = 0, limit = 20 } = {}) {
     }
 
   } else if (query) {
-    const q = query.toLowerCase().trim()
+    const q      = query.toLowerCase().trim()
+    const tokens = q.split(/\s+/).filter(Boolean)
 
-    // Exact name index lookup first
+    // Exact name index lookup — full phrase, score 100
     const exactId = graph.index[q]
     if (exactId && graph.entities[exactId]) {
       results.set(exactId, { entity: graph.entities[exactId], score: 100, hops: 0 })
     }
 
-    // Full scan for partial / content matches
     for (const [id, entity] of Object.entries(graph.entities)) {
-      if (results.has(id)) continue
+      const name  = (entity.name        || '').toLowerCase()
+      const desc  = (entity.description || '').toLowerCase()
+      const notes = (Array.isArray(entity.notes) ? entity.notes.join(' ') : '').toLowerCase()
+      const eid   = id.toLowerCase()
+      const tags  = (entity.tags || []).join(' ').toLowerCase()
+      const blob  = `${name} ${desc} ${notes} ${eid} ${tags}`
 
-      const name = (entity.name        || '').toLowerCase()
-      const desc = (entity.description || '').toLowerCase()
-      const eid  = id.toLowerCase()
-      const tags = (entity.tags || []).join(' ').toLowerCase()
+      let score = results.get(id)?.score ?? 0
 
-      let score = 0
-      if      (name === q || eid === q)     score = 100
-      else if (name.startsWith(q))          score = 80
-      else if (name.includes(q))            score = 60
-      else if (desc.includes(q))            score = 40
-      else if (eid.includes(q))             score = 30
-      else if (tags.includes(q))            score = 20
+      // ── Full-phrase matches (high confidence) ──────────────────────────────
+      if (!score) {
+        if      (name === q || eid === q)  score = Math.max(score, 100)
+        else if (name.startsWith(q))       score = Math.max(score, 80)
+        else if (name.includes(q))         score = Math.max(score, 60)
+        else if (desc.includes(q))         score = Math.max(score, 40)
+        else if (eid.includes(q))          score = Math.max(score, 30)
+        else if (tags.includes(q))         score = Math.max(score, 25)
+      }
+
+      // ── Token-based scoring (multi-word queries) ───────────────────────────
+      // Each token that matches contributes; reward entities that hit more tokens.
+      if (tokens.length > 1) {
+        let tokenHits = 0
+        for (const tok of tokens) {
+          if (name.includes(tok))       { tokenHits++; score = Math.max(score, 15) }
+          else if (tags.includes(tok))  { tokenHits++; score = Math.max(score, 10) }
+          else if (desc.includes(tok))  { tokenHits++; score = Math.max(score,  8) }
+          else if (blob.includes(tok))  { tokenHits++; score = Math.max(score,  5) }
+        }
+        // Bonus for matching multiple tokens — scales up to full-phrase score
+        if (tokenHits > 1) {
+          score += Math.round((tokenHits / tokens.length) * 20)
+        } else if (tokenHits === 0) {
+          score = 0
+        }
+      }
 
       if (score > 0) results.set(id, { entity, score, hops: 0 })
     }
@@ -185,10 +208,42 @@ function formatHuman(results, { query, tag, type, depth }) {
 
 async function main() {
   const args = minimist(process.argv.slice(3), { // slice(3): strip 'grim oracle'
-    boolean: ['json', 'list-tags', 'list-types'],
+    boolean: ['json', 'list-tags', 'list-types', 'list-ontology', 'suggest-tags'],
     alias:   { j: 'json', d: 'depth', t: 'tag', l: 'limit' },
     default: { depth: 0, limit: 20 }
   })
+
+  // ── Ontology modes (no graph load needed) ─────────────────────────────────
+
+  if (args['list-ontology']) {
+    if (args.json) {
+      console.log(JSON.stringify(TAGS, null, 2))
+    } else {
+      console.log('\n  Canonical tag ontology:\n')
+      let lastNs = ''
+      for (const [tag, desc] of Object.entries(TAGS)) {
+        const ns = tag.split('/')[0]
+        if (ns !== lastNs) { console.log(); lastNs = ns }
+        console.log(`  ${tag.padEnd(32)}  ${desc}`)
+      }
+      console.log()
+    }
+    return
+  }
+
+  if (args['suggest-tags']) {
+    const q = args._.join(' ').trim()
+    if (!q) { console.error('Usage: grim oracle --suggest-tags <query>'); process.exit(1) }
+    const suggestions = suggestTags(q)
+    if (args.json) {
+      console.log(JSON.stringify(suggestions, null, 2))
+    } else {
+      console.log(`\n  Suggested tags for "${q}":\n`)
+      for (const tag of suggestions) console.log(`  ${tag.padEnd(32)}  ${TAGS[tag]}`)
+      console.log()
+    }
+    return
+  }
 
   requireMode('any')
   const graph = await loadGraph()
