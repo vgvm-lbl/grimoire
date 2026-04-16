@@ -96,7 +96,12 @@ install_grim_link() {
     return
   fi
 
-  [[ -e "$link" ]] && rm "$link"
+  if [[ -L "$link" || -e "$link" ]]; then
+    warn "~/bin/grim already exists ($(readlink "$link" 2>/dev/null || echo 'not a symlink'))"
+    read -r -p "  Overwrite it? [y/N] " CONFIRM
+    [[ "${CONFIRM,,}" == "y" ]] || { warn "skipped — leaving existing ~/bin/grim in place"; return; }
+    rm "$link"
+  fi
   ln -s "$target" "$link"
   ok "linked: ~/bin/grim → $target"
 
