@@ -61,9 +61,12 @@ if (!entry) {
 
 const scriptPath = path.join(__dirname, entry.script)
 
-// Pass the subcommand through as first arg so scripts know how they were invoked
-// (load vs save on grim-session.js, for example)
+// Strip 'grim' and the subcommand — scripts see standard process.argv.slice(2) args.
+// Scripts that handle multiple subcommands (e.g. grim-session.js) receive the
+// subcommand as the first positional: grim load → args._[0] === 'load'
 process.argv = [process.argv[0], scriptPath, cmd, ...process.argv.slice(3)]
+// Note: cmd is still injected as argv[2] so session.js can detect load vs save.
+// All scripts use process.argv.slice(3) for their flags/args.
 
 try {
   require(scriptPath)
