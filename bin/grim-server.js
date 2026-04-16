@@ -151,7 +151,9 @@ app.post('/api/tome/recall', async (req, res) => {
 
 app.post('/api/tome/remember', async (req, res) => {
   try {
-    const result = await remember(req.body)
+    const { type, ...rest } = req.body
+    const body = type ? { '@type': type, ...rest } : req.body
+    const result = await remember(body)
     _graphCache = null
     res.json(result)
   } catch (e) {
@@ -323,7 +325,8 @@ async function executeMCPTool(name, args) {
     }
 
     case 'tome_remember': {
-      const result = await remember(args)
+      const { type, ...rest } = args
+      const result = await remember({ '@type': type, ...rest })
       _graphCache  = null
       return result
     }
