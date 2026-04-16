@@ -19,25 +19,10 @@
 const fs       = require('node:fs')
 const path     = require('node:path')
 const minimist = require('minimist')
+const { config, requireMode } = require('../lib/env')
 
-if (!process.env.GRIMOIRE_ROOT) {
-  // Try loading .env from engine root
-  const envFile = path.join(__dirname, '..', '.env')
-  if (fs.existsSync(envFile)) {
-    for (const line of fs.readFileSync(envFile, 'utf8').split('\n')) {
-      const m = line.match(/^\s*([A-Z_]+)\s*=\s*(.+?)\s*$/)
-      if (m && !process.env[m[1]]) process.env[m[1]] = m[2]
-    }
-  }
-}
-
-if (!process.env.GRIMOIRE_ROOT) {
-  console.error('Error: GRIMOIRE_ROOT is not set.')
-  console.error('Set it in .env or export it before running grim.')
-  process.exit(1)
-}
-
-const KB_ROOT = path.join(process.env.GRIMOIRE_ROOT, 'knowledge-graph')
+requireMode('local')
+const KB_ROOT = config.root
 
 const ENTITIES_DIR = path.join(KB_ROOT, 'entities')
 const INDEXES_DIR  = path.join(KB_ROOT, 'indexes')
