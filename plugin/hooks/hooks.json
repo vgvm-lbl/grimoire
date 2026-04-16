@@ -1,24 +1,25 @@
 {
-  "hooks": [
-    {
-      "event": "SessionStart",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "node ${CLAUDE_PLUGIN_ROOT}/../bin/grim-session.js load --json 2>/dev/null || echo '{\"status\":\"grimoire-offline\"}'",
-          "description": "Load Grimoire briefing on session start"
-        }
-      ]
-    },
-    {
-      "event": "Stop",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "echo '{\"remind\": true, \"message\": \"Run /save to write your save state to Grimoire before you go.\"}'",
-          "description": "Remind user to save session on Stop"
-        }
-      ]
-    }
-  ]
+  "description": "Grimoire session lifecycle hooks — auto-load briefing on start, remind to save on stop",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/../bin/grim-session.js\" load --json 2>/dev/null || echo '{\"status\":\"grimoire-offline\"}'"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"remind\": true, \"message\": \"Run /save to write your save state to Grimoire before you go.\"}'"
+          }
+        ]
+      }
+    ]
+  }
 }
