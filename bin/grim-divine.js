@@ -173,6 +173,8 @@ async function main() {
   formatHuman(results, scoring)
 }
 
-main().catch(e => { console.error(e.message); process.exit(1) })
-
 module.exports = { runChecks, computeScore }
+
+if (require.main === module) {
+  main().catch(e => { console.error(e.message); process.exit(1) })
+}
