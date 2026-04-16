@@ -9,7 +9,8 @@
  *   grim --help
  */
 
-const path = require('node:path')
+const path    = require('node:path')
+const { spawnSync } = require('node:child_process')
 
 const COMMANDS = {
   'scribe':    { script: 'grim-scribe.js',   desc: 'Rebuild the graph index           (The Scribe)'    },
@@ -61,19 +62,16 @@ if (!entry) {
 
 const scriptPath = path.join(__dirname, entry.script)
 
-// Strip 'grim' and the subcommand — scripts see standard process.argv.slice(2) args.
-// Scripts that handle multiple subcommands (e.g. grim-session.js) receive the
-// subcommand as the first positional: grim load → args._[0] === 'load'
-process.argv = [process.argv[0], scriptPath, cmd, ...process.argv.slice(3)]
-// Note: cmd is still injected as argv[2] so session.js can detect load vs save.
-// All scripts use process.argv.slice(3) for their flags/args.
-
-try {
-  require(scriptPath)
-} catch (e) {
-  if (e.code === 'MODULE_NOT_FOUND' && e.message.includes(entry.script)) {
-    console.error(`grim: '${cmd}' is not built yet (${entry.script} not found)`)
-    process.exit(1)
-  }
-  throw e
+if (!require('node:fs').existsSync(scriptPath)) {
+  console.error(`grim: '${cmd}' is not built yet (${entry.script} not found)`)
+  process.exit(1)
 }
+
+// Spawn the script as its own process so require.main === module works correctly
+// inside each script (required by grim-server.js for shared modules).
+const result = spawnSync(
+  process.execPath,
+  [scriptPath, cmd, ...process.argv.slice(3)],
+  { stdio: 'inherit', env: process.env }
+)
+process.exit(result.status ?? 1)
