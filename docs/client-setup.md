@@ -7,14 +7,14 @@ This guide covers connecting a new machine on your LAN to the Grimoire server ru
 ## Prerequisites
 
 - Grimoire server is running on `aid` (`grim serve` — see server setup)
-- Port **3666** is open on `aid`'s firewall (see below)
+- Port **3663** is open on `aid`'s firewall (see below)
 - Node.js 18+ installed on the client
 
 ---
 
 ## 1. Resolve `aid` on the client
 
-Add `aid` to the client's hosts file so `http://aid:3666` resolves correctly.
+Add `aid` to the client's hosts file so `http://aid:3663` resolves correctly.
 
 Find the IP of `aid` first (run on `aid`):
 ```bash
@@ -35,7 +35,7 @@ sudo echo "192.168.1.42  aid" >> /etc/hosts
 Verify:
 ```bash
 ping aid
-curl http://aid:3666/health
+curl http://aid:3663/health
 # → {"status":"ok","entities":7,"edges":5}
 ```
 
@@ -66,7 +66,7 @@ Edit `.env` — for a remote client, set `GRIMOIRE_HOST` and leave `GRIMOIRE_ROO
 
 ```bash
 # Remote mode — no local KB access
-GRIMOIRE_HOST=http://aid:3666
+GRIMOIRE_HOST=http://aid:3663
 
 # Leave GRIMOIRE_ROOT unset (or comment it out)
 # GRIMOIRE_ROOT=~/data/grimoire-kb
@@ -86,7 +86,7 @@ Add Grimoire as an MCP server in your Claude Code project config (`.mcp.json` in
   "mcpServers": {
     "grimoire": {
       "type": "http",
-      "url": "http://aid:3666/mcp"
+      "url": "http://aid:3663/mcp"
     }
   }
 }
@@ -113,35 +113,35 @@ grim oracle "grimoire"
 
 ---
 
-## Firewall: Opening Port 3666 on `aid`
+## Firewall: Opening Port 3663 on `aid`
 
 Run these on `aid`:
 
 ### ufw (Ubuntu/Debian default)
 ```bash
-sudo ufw allow 3666/tcp comment 'Grimoire server'
+sudo ufw allow 3663/tcp comment 'Grimoire server'
 sudo ufw reload
 sudo ufw status
 ```
 
 ### firewalld (Fedora/RHEL/Arch)
 ```bash
-sudo firewall-cmd --permanent --add-port=3666/tcp
+sudo firewall-cmd --permanent --add-port=3663/tcp
 sudo firewall-cmd --reload
 sudo firewall-cmd --list-ports
 ```
 
 ### iptables (manual)
 ```bash
-sudo iptables -A INPUT -p tcp --dport 3666 -j ACCEPT
+sudo iptables -A INPUT -p tcp --dport 3663 -j ACCEPT
 # Persist with iptables-save or your distro's method
 ```
 
 ### Verify the port is open (from a client):
 ```bash
-nc -zv aid 3666
+nc -zv aid 3663
 # or
-curl -s http://aid:3666/health | python3 -m json.tool
+curl -s http://aid:3663/health | python3 -m json.tool
 ```
 
 ---
@@ -150,7 +150,7 @@ curl -s http://aid:3666/health | python3 -m json.tool
 
 | Port | Service | Direction | Notes |
 |------|---------|-----------|-------|
-| 3666 | Grimoire HTTP + MCP | LAN inbound | Required for all client tools |
+| 3663 | Grimoire HTTP + MCP | LAN inbound | Required for all client tools |
 | 11434 | Ollama | LAN inbound | Optional — only if clients query Ollama directly |
 
 ---

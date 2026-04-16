@@ -72,4 +72,4 @@ systemctl status grimoire --no-pager -l
 echo ""
 echo "grimoire: service installed and running"
 echo "  logs:   journalctl -u grimoire -f"
-echo "  health: curl http://aid:3666/health"
+echo "  health: curl http://aid:3663/health"

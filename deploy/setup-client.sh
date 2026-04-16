@@ -7,9 +7,9 @@
 # What it does:
 #   1. Checks Node.js 18+
 #   2. npm install
-#   3. Writes .env (remote mode — points at aid:3666)
+#   3. Writes .env (remote mode — points at aid:3663)
 #   4. Optionally adds aid to /etc/hosts (asks for IP if missing)
-#   5. Installs grim CLI globally
+#   5. Symlinks grim CLI into ~/bin (no sudo, no global install)
 #   6. Configures Claude Code: MCP server + plugin
 #   7. Smoke-tests the connection
 
@@ -51,7 +51,7 @@ else
 # Grimoire client — remote mode
 # GRIMOIRE_ROOT is intentionally unset; all KB access goes via the server.
 
-GRIMOIRE_HOST=http://aid:3666
+GRIMOIRE_HOST=http://aid:3663
 OLLAMA_HOST=http://aid:11434
 EOF
   ok "wrote .env (remote mode)"
@@ -80,13 +80,33 @@ else
   fi
 fi
 
-# ── 5. Install grim CLI globally ──────────────────────────────────────────────
-step "Installing grim CLI globally..."
-if npm install -g . --silent 2>/dev/null; then
-  ok "grim installed globally ($(which grim 2>/dev/null || echo 'may need PATH refresh'))"
-else
-  warn "global install failed (permissions?) — you can still run: node $ENGINE_ROOT/bin/grim.js"
-fi
+# ── 5. Symlink grim CLI into ~/bin ────────────────────────────────────────────
+step "Linking grim CLI into ~/bin..."
+
+install_grim_link() {
+  local bin_dir="$HOME/bin"
+  local link="$bin_dir/grim"
+  local target="$ENGINE_ROOT/bin/grim.js"
+
+  mkdir -p "$bin_dir"
+  chmod +x "$target"
+
+  if [[ -L "$link" && "$(readlink "$link")" == "$target" ]]; then
+    ok "~/bin/grim already linked"
+    return
+  fi
+
+  [[ -e "$link" ]] && rm "$link"
+  ln -s "$target" "$link"
+  ok "linked: ~/bin/grim → $target"
+
+  if ! echo ":$PATH:" | grep -q ":$bin_dir:"; then
+    warn "~/bin is not in PATH — add this to your shell profile:"
+    warn "  export PATH=\"\$HOME/bin:\$PATH\""
+  fi
+}
+
+install_grim_link
 
 # ── 6. Claude Code — MCP + plugin ─────────────────────────────────────────────
 step "Configuring Claude Code..."
@@ -94,15 +114,15 @@ step "Configuring Claude Code..."
 CLAUDE_BIN=$(which claude 2>/dev/null || true)
 if [[ -z "$CLAUDE_BIN" ]]; then
   warn "claude CLI not found — skipping Claude Code setup"
-  warn "Install Claude Code then run: claude mcp add --transport http grimoire http://aid:3666/mcp --scope user"
+  warn "Install Claude Code then run: claude mcp add --transport http grimoire http://aid:3663/mcp --scope user"
 else
   # MCP server
   if claude mcp list 2>/dev/null | grep -q 'grimoire'; then
     ok "grimoire MCP server already configured"
   else
-    claude mcp add --transport http grimoire http://aid:3666/mcp --scope user 2>/dev/null \
-      && ok "grimoire MCP server registered (http://aid:3666/mcp)" \
-      || warn "MCP registration failed — run manually: claude mcp add --transport http grimoire http://aid:3666/mcp --scope user"
+    claude mcp add --transport http grimoire http://aid:3663/mcp --scope user 2>/dev/null \
+      && ok "grimoire MCP server registered (http://aid:3663/mcp)" \
+      || warn "MCP registration failed — run manually: claude mcp add --transport http grimoire http://aid:3663/mcp --scope user"
   fi
 
   # Plugin marketplace + install
@@ -146,12 +166,12 @@ EOF
 fi
 
 # ── 7. Smoke test ─────────────────────────────────────────────────────────────
-step "Testing connection to aid:3666..."
-if curl -sf http://aid:3666/health -o /dev/null 2>/dev/null; then
-  HEALTH=$(curl -s http://aid:3666/health)
+step "Testing connection to aid:3663..."
+if curl -sf http://aid:3663/health -o /dev/null 2>/dev/null; then
+  HEALTH=$(curl -s http://aid:3663/health)
   ok "Grimoire server reachable — $HEALTH"
 else
-  warn "Cannot reach http://aid:3666/health"
+  warn "Cannot reach http://aid:3663/health"
   warn "Make sure the server is running on aid: grim serve  (or systemctl start grimoire)"
 fi
 

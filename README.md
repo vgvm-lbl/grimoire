@@ -82,9 +82,9 @@ grim serve
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GRIMOIRE_ROOT` | — | Path to grimoire-kb directory (local mode) |
-| `GRIMOIRE_HOST` | — | Grimoire server URL, e.g. `http://aid:3666` (remote mode) |
+| `GRIMOIRE_HOST` | — | Grimoire server URL, e.g. `http://aid:3663` (remote mode) |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama base URL |
-| `GRIMOIRE_PORT` | `3666` | Port for `grim serve` |
+| `GRIMOIRE_PORT` | `3663` | Port for `grim serve` |
 
 ---
 
@@ -118,7 +118,7 @@ Grimoire ships with five personas — specialized AI behavior modes:
 
 ## Firewall
 
-Open port **3666** on aid for LAN clients. See [docs/client-setup.md](docs/client-setup.md).
+Open port **3663** on aid for LAN clients. See [docs/client-setup.md](docs/client-setup.md).
 
 ---
 

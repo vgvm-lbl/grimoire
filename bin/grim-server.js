@@ -5,7 +5,7 @@
  * grim-server.js — The Grimoire Server
  *
  * Exposes the KB to the LAN via HTTP REST API + MCP endpoint.
- * Binds to 0.0.0.0 so clients on other hosts can reach it via http://aid:3666
+ * Binds to 0.0.0.0 so clients on other hosts can reach it via http://aid:3663
  *
  * Routes:
  *   GET  /health                 → status + graph stats

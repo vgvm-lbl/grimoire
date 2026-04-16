@@ -33,7 +33,7 @@ cp .env.example .env
 ```bash
 GRIMOIRE_ROOT=~/data/grimoire-kb
 OLLAMA_HOST=http://aid:11434
-GRIMOIRE_PORT=3666
+GRIMOIRE_PORT=3663
 ```
 
 ## 4. Hosts file — add `aid` to this machine
@@ -60,7 +60,7 @@ curl http://aid:11434/api/tags
 
 ```bash
 # ufw (Ubuntu/Debian)
-sudo ufw allow 3666/tcp comment 'Grimoire server'
+sudo ufw allow 3663/tcp comment 'Grimoire server'
 sudo ufw reload
 ```
 
@@ -75,7 +75,7 @@ grim scribe
 
 ```bash
 grim serve
-# ░ Grimoire online. http://0.0.0.0:3666
+# ░ Grimoire online. http://0.0.0.0:3663
 ```
 
 ### Run as a systemd service (persistent across reboots)
@@ -121,9 +121,9 @@ Schedule during work hours when Ollama is warm. Avoid 2 AM.
 
 ```bash
 # Health check (on aid)
-curl http://aid:3666/health
+curl http://aid:3663/health
 
 # From another LAN machine
-curl http://aid:3666/health
+curl http://aid:3663/health
 # → {"status":"ok","entities":7,"edges":5}
 ```
