@@ -18,6 +18,7 @@
  *   POST /api/tome/remember      → create entity
  *   POST /api/tome/relate        → add relationship
  *   POST /api/tome/annotate      → annotate entity
+ *   POST /api/scribe             → rebuild graph index + bust cache
  *   POST /noise-floor/think      → add thought to stream
  *   GET  /noise-floor/context    → get recent thoughts
  *   POST /mcp                    → MCP Streamable HTTP transport
@@ -87,6 +88,19 @@ app.get('/api/graph', async (req, res) => {
   try {
     const graph = await getGraph(req.query.fresh === '1')
     res.json(graph)
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+app.post('/api/scribe', async (req, res) => {
+  try {
+    const { scribe } = require('./grim-scribe')
+    await scribe()
+    _graphCache   = null
+    _graphCachedAt = 0
+    const graph   = await getGraph()
+    res.json({ ok: true, entities: Object.keys(graph.entities).length, edges: graph._meta?.edgeCount ?? 0 })
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
@@ -303,6 +317,11 @@ const MCP_TOOLS = [
       },
     },
   },
+  {
+    name: 'scribe',
+    description: 'Rebuild the graph index from entity files on disk and bust the server cache. Use after direct file edits.',
+    inputSchema: { type: 'object', properties: {} },
+  },
 ]
 
 async function executeMCPTool(name, args) {
@@ -359,6 +378,15 @@ async function executeMCPTool(name, args) {
       thoughts.push({ at: new Date().toISOString(), text: args.text, source: args.source || 'mcp', type: args.type || 'observation' })
       saveThoughts(thoughts)
       return { ok: true }
+    }
+
+    case 'scribe': {
+      const { scribe } = require('./grim-scribe')
+      await scribe()
+      _graphCache    = null
+      _graphCachedAt = 0
+      const graph    = await getGraph()
+      return { ok: true, entities: Object.keys(graph.entities).length, edges: graph._meta?.edgeCount ?? 0 }
     }
 
     default:
