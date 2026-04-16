@@ -1,11 +1,11 @@
 ---
-name: wake
+name: load
 description: Load the Grimoire session briefing — who you are, where you were, what matters. Run at the start of any work session.
 argument-hint: [topic]
 allowed-tools: [mcp__grimoire__session_load, mcp__grimoire__oracle_search, mcp__grimoire__tome_recall]
 ---
 
-# /wake — Load Save
+# /load — Load Save
 
 Load the Grimoire session briefing and orient yourself for this session.
 
