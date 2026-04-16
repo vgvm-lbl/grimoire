@@ -44,8 +44,8 @@ curl http://aid:3666/health
 ## 2. Install the Grimoire engine
 
 ```bash
-git clone <grimoire-repo-url> ~/grimoire
-cd ~/grimoire
+git clone <grimoire-repo-url> ~/src/me/grimoire
+cd ~/src/me/grimoire
 npm install
 ```
 
@@ -69,10 +69,10 @@ Edit `.env` — for a remote client, set `GRIMOIRE_HOST` and leave `GRIMOIRE_ROO
 GRIMOIRE_HOST=http://aid:3666
 
 # Leave GRIMOIRE_ROOT unset (or comment it out)
-# GRIMOIRE_ROOT=/mnt/eighty/userspace/vgvm/data/grimoire-kb
+# GRIMOIRE_ROOT=~/data/grimoire-kb
 
-# Ollama — point at aid if you want to use its models remotely
-# OLLAMA_HOST=http://aid:11434
+# Ollama — point at aid to use its models remotely
+OLLAMA_HOST=http://aid:11434
 ```
 
 ---

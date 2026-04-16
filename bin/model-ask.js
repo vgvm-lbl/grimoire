@@ -41,7 +41,7 @@ const ROUTES = {
   default:     { model: 'qwen2.5-coder:14b' },
 }
 
-const OLLAMA_BASE = process.env.OLLAMA_HOST || 'http://localhost:11434'
+const OLLAMA_BASE = process.env.OLLAMA_HOST || 'http://aid:11434'
 
 /**
  * Ask a model a question.

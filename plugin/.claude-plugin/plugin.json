@@ -1,6 +1,5 @@
 {
   "name": "grimoire",
   "version": "0.1.0",
-  "description": "Personal knowledge graph — persistent memory, personas, session lifecycle",
-  "author": "vgvm"
+  "description": "Personal knowledge graph — persistent memory, personas, session lifecycle"
 }
