@@ -37,6 +37,7 @@ const { search }         = require('./grim-oracle')
 const { loadBriefing, saveSession } = require('./grim-session')
 const { recall, remember, relate, annotate } = require('./grim-tome')
 const { config, requireMode } = require('../lib/env')
+const { semanticSearch, indexReady } = require('../lib/vectors')
 
 requireMode('local')
 
@@ -95,12 +96,12 @@ app.get('/api/graph', async (req, res) => {
 
 app.post('/api/scribe', async (req, res) => {
   try {
-    const { scribe } = require('./grim-scribe')
-    await scribe()
-    _graphCache   = null
+    const { scribeAll } = require('./grim-scribe')
+    const { graph, vectors } = await scribeAll({ force: req.body?.force ?? false })
+    _graphCache    = null
     _graphCachedAt = 0
-    const graph   = await getGraph()
-    res.json({ ok: true, entities: Object.keys(graph.entities).length, edges: graph._meta?.edgeCount ?? 0 })
+    await getGraph()
+    res.json({ ok: true, entities: Object.keys(graph.entities).length, edges: graph._meta?.edgeCount ?? 0, vectors })
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
@@ -108,13 +109,22 @@ app.post('/api/scribe', async (req, res) => {
 
 app.get('/api/oracle', async (req, res) => {
   try {
-    const graph   = await getGraph()
+    const graph = await getGraph()
+    const query = req.query.q || null
+    const limit = Number(req.query.limit || 20)
+    let semanticHits = []
+    if (query && !req.query['no-semantic']) {
+      try {
+        if (await indexReady()) semanticHits = await semanticSearch(query, limit * 2)
+      } catch { /* degraded */ }
+    }
     const results = search(graph, {
-      query: req.query.q    || null,
+      query,
       tag:   req.query.tag  || null,
       type:  req.query.type || null,
       depth: Number(req.query.depth || 0),
-      limit: Number(req.query.limit || 20),
+      limit,
+      semanticHits,
     })
     res.json(results)
   } catch (e) {

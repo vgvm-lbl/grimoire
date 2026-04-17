@@ -38,6 +38,7 @@ const ROUTES = {
   dreaming:    { model: 'qwen3.5:latest'    },  // long rest / deep analysis
   rumination:  { model: 'qwen2.5-coder:7b'  },  // noise floor — background, periodic
   analysis:    { model: 'glm-4.7-flash:latest' }, // heavy analysis
+  embedding:   { model: 'nomic-embed-text'  },  // semantic vector embeddings
   default:     { model: 'qwen2.5-coder:14b' },
 }
 

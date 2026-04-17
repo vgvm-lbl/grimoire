@@ -20,6 +20,7 @@ const fs       = require('node:fs')
 const path     = require('node:path')
 const minimist = require('minimist')
 const { config, requireMode } = require('../lib/env')
+const { buildIndex, indexReady } = require('../lib/vectors')
 
 requireMode('local')
 const KB_ROOT = config.root
@@ -136,39 +137,78 @@ function scribe({ verbose = false } = {}) {
   return { graph, errors }
 }
 
+/**
+ * Async: rebuild graph then incrementally update the vector index.
+ * @param {object} [opts]
+ * @param {boolean} [opts.force]   - re-embed all entities
+ * @param {boolean} [opts.verbose]
+ * @returns {Promise<{graph, errors, vectors}>}
+ */
+async function scribeAll({ force = false, verbose = false } = {}) {
+  const { graph, errors } = scribe({ verbose })
+
+  let vectors = null
+  try {
+    const total = Object.keys(graph.entities).length
+    process.stdout.write(`  Embedding  : `)
+    let last = 0
+    vectors = await buildIndex(graph, {
+      force,
+      onProgress(done, t) {
+        const pct = Math.floor((done / t) * 20)
+        if (pct > last) { process.stdout.write('█'.repeat(pct - last)); last = pct }
+      },
+    })
+    process.stdout.write(`\n`)
+  } catch (e) {
+    vectors = { error: e.message }
+  }
+
+  return { graph, errors, vectors }
+}
+
 // ── CLI ──────────────────────────────────────────────────────────────────────
 
-if (require.main === module) {
-  const args = minimist(process.argv.slice(2), {
-    boolean: ['json', 'verbose'],
+async function main() {
+  const args = minimist(process.argv.slice(3), {
+    boolean: ['json', 'verbose', 'no-embed', 'force-embed'],
     alias: { j: 'json', v: 'verbose' }
   })
 
-  const { graph, errors } = scribe({ verbose: args.verbose })
+  const skipEmbed = args['no-embed']
+  const force     = args['force-embed']
+
+  if (skipEmbed) {
+    const { graph, errors } = scribe({ verbose: args.verbose })
+    const m = graph._meta
+    if (args.json) {
+      console.log(JSON.stringify({ entityCount: m.entityCount, edgeCount: m.edgeCount, tagCount: m.tagCount, errorCount: m.errorCount, builtAt: m.builtAt }, null, 2))
+    } else {
+      console.log(`  The Scribe has spoken.`)
+      console.log(`  Entities : ${m.entityCount}  Edges : ${m.edgeCount}  Tags : ${m.tagCount}`)
+      if (errors.length) console.warn(`  Errors   : ${errors.length}${args.verbose ? '' : ' (--verbose for details)'}`)
+      if (args.verbose) for (const e of errors) console.error(`    ✗ ${path.relative(ENTITIES_DIR, e.file)}: ${e.error}`)
+    }
+    return
+  }
+
+  const { graph, errors, vectors } = await scribeAll({ force, verbose: args.verbose })
   const m = graph._meta
 
   if (args.json) {
-    console.log(JSON.stringify({
-      entityCount: m.entityCount,
-      edgeCount:   m.edgeCount,
-      tagCount:    m.tagCount,
-      errorCount:  m.errorCount,
-      builtAt:     m.builtAt,
-    }, null, 2))
+    console.log(JSON.stringify({ entityCount: m.entityCount, edgeCount: m.edgeCount, tagCount: m.tagCount, errorCount: m.errorCount, builtAt: m.builtAt, vectors }, null, 2))
   } else {
-    console.log(`📖  The Scribe has spoken.`)
-    console.log(`    Entities : ${m.entityCount}`)
-    console.log(`    Edges    : ${m.edgeCount}`)
-    console.log(`    Tags     : ${m.tagCount}`)
-    if (errors.length) {
-      console.warn(`    Errors   : ${errors.length}`)
-      if (args.verbose) {
-        for (const e of errors) console.error(`      ✗ ${path.relative(ENTITIES_DIR, e.file)}: ${e.error}`)
-      } else {
-        console.warn(`    (run with --verbose to see details)`)
-      }
-    }
+    console.log(`  The Scribe has spoken.`)
+    console.log(`  Entities : ${m.entityCount}  Edges : ${m.edgeCount}  Tags : ${m.tagCount}`)
+    if (vectors?.error)   console.warn(`  Vectors  : failed — ${vectors.error}`)
+    else if (vectors)     console.log(`  Vectors  : +${vectors.added} new  ~${vectors.updated} updated  ${vectors.skipped} unchanged`)
+    if (errors.length)    console.warn(`  Errors   : ${errors.length}${args.verbose ? '' : ' (--verbose for details)'}`)
+    if (args.verbose) for (const e of errors) console.error(`    ✗ ${path.relative(ENTITIES_DIR, e.file)}: ${e.error}`)
   }
 }
 
-module.exports = { scribe, KB_ROOT, ENTITIES_DIR, INDEXES_DIR, GRAPH_FILE }
+module.exports = { scribe, scribeAll, KB_ROOT, ENTITIES_DIR, INDEXES_DIR, GRAPH_FILE }
+
+if (require.main === module) {
+  main().catch(e => { console.error(e.message); process.exit(1) })
+}

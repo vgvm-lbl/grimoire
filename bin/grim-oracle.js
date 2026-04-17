@@ -23,8 +23,9 @@
 
 const minimist              = require('minimist')
 const { loadGraph }         = require('../lib/graph')
-const { requireMode }       = require('../lib/env')
+const { requireMode, config, isLocal } = require('../lib/env')
 const { TAGS, suggestTags } = require('../lib/tags')
+const { semanticSearch, indexReady } = require('../lib/vectors')
 
 // ── Search ───────────────────────────────────────────────────────────────────
 
@@ -32,14 +33,15 @@ const { TAGS, suggestTags } = require('../lib/tags')
  * Search the graph.
  * @param {object} graph
  * @param {object} opts
- * @param {string}  [opts.query]  - free-text search
- * @param {string}  [opts.tag]    - exact tag filter
- * @param {string}  [opts.type]   - @type filter
- * @param {number}  [opts.depth]  - relationship traversal depth (default 0)
- * @param {number}  [opts.limit]  - max results (default 20)
+ * @param {string}  [opts.query]         - free-text search
+ * @param {string}  [opts.tag]           - exact tag filter
+ * @param {string}  [opts.type]          - @type filter
+ * @param {number}  [opts.depth]         - relationship traversal depth (default 0)
+ * @param {number}  [opts.limit]         - max results (default 20)
+ * @param {Array}   [opts.semanticHits]  - pre-computed vector hits to merge in
  * @returns {Array<{entity, score, hops}>}
  */
-function search(graph, { query, tag, type, depth = 0, limit = 20 } = {}) {
+function search(graph, { query, tag, type, depth = 0, limit = 20, semanticHits = [] } = {}) {
   const results = new Map() // id → { entity, score, hops }
 
   // ── Seed results ───────────────────────────────────────────────────────────
@@ -107,6 +109,20 @@ function search(graph, { query, tag, type, depth = 0, limit = 20 } = {}) {
       }
 
       if (score > 0) results.set(id, { entity, score, hops: 0 })
+    }
+
+    // ── Merge semantic hits ──────────────────────────────────────────────────
+    // Vector scores are cosine similarity 0–1; scale to 0–55 and blend in.
+    for (const hit of semanticHits) {
+      const entity = graph.entities[hit.id]
+      if (!entity) continue
+      const semScore = Math.round(hit.score * 55)
+      const existing = results.get(hit.id)
+      if (existing) {
+        existing.score = Math.max(existing.score, semScore) + Math.round(semScore * 0.3)
+      } else {
+        results.set(hit.id, { entity, score: semScore, hops: 0 })
+      }
     }
   }
 
@@ -298,6 +314,15 @@ async function main() {
     console.error('       grim oracle --list-tags')
     console.error('       grim oracle --list-types')
     process.exit(1)
+  }
+
+  // Semantic search — local only (needs vector index on disk), runs alongside keyword
+  if (opts.query && isLocal && !args['no-semantic']) {
+    try {
+      if (await indexReady()) {
+        opts.semanticHits = await semanticSearch(opts.query, opts.limit * 2)
+      }
+    } catch { /* degraded gracefully — keyword only */ }
   }
 
   const results = search(graph, opts)
