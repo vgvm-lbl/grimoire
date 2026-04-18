@@ -1,5 +1,5 @@
 {
-  "grimoire": {
+  "server": {
     "type": "http",
     "url": "http://aid:3663/mcp"
   }
