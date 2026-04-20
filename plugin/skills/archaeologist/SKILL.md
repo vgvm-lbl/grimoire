@@ -32,6 +32,14 @@ Phase 6   Claude reports                     →  summary to user
 
 ## Phase 1–3: Run the Dig
 
+First check if the dig already ran:
+```bash
+grim archaeologist --backlog   # shows all pending final.md files not yet KB-processed
+```
+
+If `final.md` already exists for this repo, **skip to Phase 2** — the dig is done.
+
+If not:
 ```bash
 grim archaeologist --dig <path> [--hints "context here"]
 ```

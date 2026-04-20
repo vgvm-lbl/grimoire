@@ -595,16 +595,66 @@ async function analyzeProject(projectDir, opts = {}) {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
+function showBacklog() {
+  const grimRoot  = process.env.GRIMOIRE_ROOT || path.join(__dirname, '..', '..', 'grimoire-kb')
+  const archRoot  = path.join(grimRoot, 'archaeology')
+
+  if (!fs.existsSync(archRoot)) {
+    console.log('  No archaeology directory found.')
+    return
+  }
+
+  const slugs   = fs.readdirSync(archRoot).filter(d => fs.statSync(path.join(archRoot, d)).isDirectory())
+  const pending = []
+  const done    = []
+
+  for (const s of slugs) {
+    const dir     = path.join(archRoot, s)
+    const hasFinal = fs.existsSync(path.join(dir, 'final.md'))
+    const hasQA    = fs.existsSync(path.join(dir, 'qa.md'))
+    const hasOvr   = fs.existsSync(path.join(dir, 'overview.md'))
+
+    if (!hasFinal) {
+      const status = hasOvr ? 'dig-in-progress' : 'empty'
+      pending.push({ slug: s, status, dir })
+    } else if (!hasQA) {
+      pending.push({ slug: s, status: 'awaiting-kb-pass', dir })
+    } else {
+      done.push(s)
+    }
+  }
+
+  console.log(`\n  ⛏  Archaeology backlog  (${archRoot})\n`)
+
+  if (pending.length) {
+    console.log(`  Pending KB pass (${pending.length}):`)
+    for (const p of pending) {
+      console.log(`    ${p.slug.padEnd(35)} [${p.status}]`)
+      if (p.status === 'awaiting-kb-pass') console.log(`      ${path.join(p.dir, 'final.md')}`)
+    }
+  } else {
+    console.log('  No pending items.')
+  }
+
+  if (done.length) {
+    console.log(`\n  Done (${done.length}): ${done.join(', ')}`)
+  }
+
+  console.log()
+}
+
 async function main() {
-  const args = minimist(process.argv.slice(3), {
-    boolean: ['dry-run', 'verbose', 'scaffold-only', 'no-goals', 'json'],
-    alias:   { v: 'verbose', n: 'dry-run', j: 'json' },
+  const argOffset = process.argv[2] === 'archaeologist' ? 3 : 2
+  const args = minimist(process.argv.slice(argOffset), {
+    boolean: ['dry-run', 'verbose', 'scaffold-only', 'no-goals', 'json', 'backlog'],
+    alias:   { v: 'verbose', n: 'dry-run', j: 'json', b: 'backlog' },
     string:  ['source', 'dig', 'overview', 'files', 'synth', 'hints'],
   })
 
-  // ── Deep dig mode ──
-  const digTarget = args.dig || args.overview || args.files || args.synth || args._[0]
+  // ── Backlog ──
+  if (args.backlog) return showBacklog()
 
+  // ── Deep dig mode ──
   if (args.dig || args.overview || args.files || args.synth) {
     const target = args.dig || args.overview || args.files || args.synth
     if (!fs.existsSync(target)) { console.error(`Not found: ${target}`); process.exit(1) }
@@ -621,7 +671,8 @@ async function main() {
   if (!source) {
     console.error('Usage:')
     console.error('  grim archaeologist --dig <path> [--hints "..."]   Deep dig (Ollama pipeline)')
-    console.error('  grim archaeologist --source <dir>                 Bulk catalog')
+    console.error('  grim archaeologist --backlog                       Show pending KB passes')
+    console.error('  grim archaeologist --source <dir>                  Bulk catalog')
     console.error('')
     console.error('Individual passes:')
     console.error('  grim archaeologist --overview <path>')
