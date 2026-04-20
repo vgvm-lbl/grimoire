@@ -22,6 +22,9 @@ const COMMANDS = {
   'load':      { script: 'grim-session.js',  desc: 'Load save — begin a session       (SAVESTATE)'     },
   'save':      { script: 'grim-session.js',  desc: 'Write save — end a session        (SAVESTATE)'     },
   'tome':      { script: 'grim-tome.js',     desc: 'Memory ops: recall/remember/relate (The Tome)'     },
+  'think':         { script: 'grim-think.js',         desc: 'Delegate thinking to Ollama            (The Oracle Mind)'   },
+  'vision':        { script: 'grim-vision.js',        desc: 'Cast image spells, interrogate images  (The Vision)'      },
+  'archaeologist': { script: 'grim-archaeologist.js', desc: 'Catalog old code into the KB            (The Archaeologist)' },
   'serve':     { script: 'grim-server.js',   desc: 'Start the Grimoire HTTP+MCP server'                },
 }
 
@@ -36,8 +39,9 @@ if (!cmd || cmd === '--help' || cmd === '-h') {
   ╚██████╔╝██║░░██║██║██║░╚═╝░██║╚█████╔╝██║██║░░██║███████╗
   ░╚═════╝░╚═╝░░╚═╝╚═╝╚═╝░░░░╚═╝░╚════╝░╚═╝╚═╝░░╚═╝╚══════╝
 
+  Grimoire Ex Machina.
   A wizard's personal knowledge graph.
-  Runs on local models. Knows everything. Costs nothing. FreeKB.
+  Runs on local models. Knows everything. Costs nothing.
 
 Commands:
 `)
@@ -47,8 +51,10 @@ Commands:
   }
   console.log(`
 Environment:
-  GRIMOIRE_ROOT   Path to grimoire data dir (default: repo root)
-  OLLAMA_HOST     Ollama base URL (default: http://localhost:11434)
+  GRIMOIRE_ROOT        Path to grimoire data dir (default: repo root)
+  OLLAMA_HOST          Ollama base URL           (default: http://localhost:11434)
+  GRIMOIRE_A1111_HOST  AUTOMATIC1111 URL         (default: http://aid:7860)
+  GRIMOIRE_VISION_OUT  Output dir for cast spells (default: /tmp)
 `)
   process.exit(0)
 }
