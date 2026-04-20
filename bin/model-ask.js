@@ -4,22 +4,35 @@
 /**
  * model-ask.js — Grimoire AI routing wrapper
  *
- * Routes tasks to the appropriate local Ollama model.
- * Usable as a module (require) or CLI.
+ * Routes tasks to the best available Ollama model by querying `ollama list`
+ * and scoring installed models against capability profiles.
+ * Model list is cached (in-memory for server, file for CLI, 5-min TTL).
+ *
+ * Commands specify tasks, never model names:
+ *   extraction   Structured JSON, entity extraction
+ *   linking      Orphan linking, fast bulk
+ *   synthesis    Deep holistic analysis (archaeologist final pass)
+ *   dreaming     Long rest, graph introspection (thinking model preferred)
+ *   reflection   Diary, journaling, conversational
+ *   rumination   Noise floor, background periodic
+ *   vision       Image understanding (llava)
+ *   embedding    Semantic vectors (always nomic-embed-text)
+ *   default      General purpose fallback
  *
  * CLI:
  *   node model-ask.js "extract entities from this text" --task extraction
- *   echo "some text" | node model-ask.js --task linking
- *   node model-ask.js --task dreaming --system "you are a wizard" "analyse this graph"
+ *   echo "some text" | node model-ask.js --task reflection
+ *   node model-ask.js --routes          Show resolved routing table
  */
 
 const fs       = require('node:fs')
 const path     = require('node:path')
+const os       = require('node:os')
 const axios    = require('axios')
 const minimist = require('minimist')
 const readline = require('node:readline')
 
-// Bootstrap .env if OLLAMA_HOST not already set
+// Bootstrap .env
 if (!process.env.OLLAMA_HOST) {
   const envFile = path.join(__dirname, '..', '.env')
   if (fs.existsSync(envFile)) {
@@ -30,86 +43,250 @@ if (!process.env.OLLAMA_HOST) {
   }
 }
 
-// Task → model routing table
-// Tune models here as you add/remove from ollama
-const ROUTES = {
-  extraction:  { model: 'qwen2.5-coder:14b' },  // entity extraction — structured JSON output
-  linking:     { model: 'qwen2.5-coder:7b'  },  // orphan linking — bulk, fast
-  dreaming:    { model: 'qwen3.5:latest'    },  // long rest / deep analysis
-  rumination:  { model: 'qwen2.5-coder:7b'  },  // noise floor — background, periodic
-  analysis:    { model: 'glm-4.7-flash:latest' }, // heavy analysis
-  embedding:   { model: 'nomic-embed-text'  },  // semantic vector embeddings
-  default:     { model: 'qwen2.5-coder:14b' },
-}
-
 const OLLAMA_BASE = process.env.OLLAMA_HOST || 'http://aid:11434'
 
-/**
- * Ask a model a question.
- * @param {object} opts
- * @param {string} opts.prompt
- * @param {string} [opts.task]    - routing key (see ROUTES)
- * @param {string} [opts.model]   - override model directly
- * @param {string} [opts.system]  - system prompt
- * @param {boolean} [opts.json]   - hint to model to return JSON
- * @returns {Promise<string>}
- */
-async function ask({ prompt, task = 'default', model, system, json = false }) {
-  const route = ROUTES[task] || ROUTES.default
-  const resolvedModel = model || route.model
+// ── Capability profiles ───────────────────────────────────────────────────────
+// Matched in order — first pattern wins. Scores are per task type (0-10).
+// thinking: true = model uses chain-of-thought; format:json breaks these.
+// size_gb: approximate VRAM footprint — used to deprioritize models that won't fit.
 
-  const body = {
-    prompt,
-    model:  resolvedModel,
-    stream: false,
+const CAPABILITY_PROFILES = [
+  {
+    match:    /^qwen3/,
+    thinking: true,
+    size_gb:  7,
+    scores:   { dreaming: 10, synthesis: 9, reflection: 8, extraction: 7, linking: 5, rumination: 4, default: 7 },
+  },
+  {
+    match:    /^phi4/,
+    thinking: false,
+    size_gb:  9,
+    scores:   { reflection: 9, synthesis: 8, extraction: 7, dreaming: 7, linking: 5, rumination: 4, default: 7 },
+  },
+  {
+    match:    /^qwen2\.5-coder:14b/,
+    thinking: false,
+    size_gb:  9,
+    scores:   { extraction: 9, linking: 7, synthesis: 6, rumination: 5, reflection: 4, default: 8 },
+  },
+  {
+    match:    /^qwen2\.5-coder:7b/,
+    thinking: false,
+    size_gb:  5,
+    scores:   { linking: 8, extraction: 6, rumination: 6, default: 5 },
+  },
+  {
+    match:    /^qwen2\.5:14b/,
+    thinking: false,
+    size_gb:  9,
+    scores:   { reflection: 8, synthesis: 7, extraction: 8, linking: 6, rumination: 5, default: 7 },
+  },
+  {
+    match:    /^qwen2\.5:7b/,
+    thinking: false,
+    size_gb:  5,
+    scores:   { linking: 7, extraction: 5, reflection: 5, rumination: 5, default: 5 },
+  },
+  {
+    match:    /^qwen2\.5/,
+    thinking: false,
+    size_gb:  5,
+    scores:   { linking: 6, extraction: 5, default: 5 },
+  },
+  {
+    match:    /^llama3/,
+    thinking: false,
+    size_gb:  5,
+    scores:   { reflection: 6, synthesis: 5, linking: 5, rumination: 4, default: 5 },
+  },
+  {
+    match:    /^glm/,
+    thinking: false,
+    size_gb:  19, // CPU offload on 16GB VRAM — penalized
+    scores:   { extraction: 2, reflection: 2, synthesis: 2, default: 2 },
+  },
+  {
+    match:    /^llava/,
+    thinking: false,
+    size_gb:  5,
+    scores:   { vision: 10 },
+  },
+  {
+    match:    /^nomic-embed/,
+    thinking: false,
+    size_gb:  0.3,
+    scores:   { embedding: 10 },
+  },
+  {
+    match:    /^phi3/,
+    thinking: false,
+    size_gb:  2.5,
+    scores:   { linking: 4, rumination: 4, reflection: 3, default: 3 },
+  },
+]
+
+// Embedding is specialized — always pinned, never resolved dynamically
+const EMBEDDING_MODEL = 'nomic-embed-text'
+
+// Fallback when Ollama is unreachable
+const STATIC_FALLBACK = {
+  extraction:  { model: 'qwen2.5-coder:14b', thinking: false },
+  linking:     { model: 'qwen2.5-coder:7b',  thinking: false },
+  dreaming:    { model: 'qwen3.5:latest',    thinking: true  },
+  synthesis:   { model: 'qwen3.5:latest',    thinking: true  },
+  reflection:  { model: 'phi4:latest',       thinking: false },
+  rumination:  { model: 'qwen2.5-coder:7b',  thinking: false },
+  vision:      { model: 'llava:latest',      thinking: false },
+  embedding:   { model: EMBEDDING_MODEL,     thinking: false },
+  default:     { model: 'qwen2.5-coder:14b', thinking: false },
+}
+
+// ── Model list cache ──────────────────────────────────────────────────────────
+
+const CACHE_TTL  = 5 * 60 * 1000
+const CACHE_FILE = path.join(os.tmpdir(), 'grimoire-models-cache.json')
+
+let _memCache     = null
+let _memCacheTime = 0
+
+async function getInstalledModels() {
+  // In-memory (server / repeated calls)
+  if (_memCache && Date.now() - _memCacheTime < CACHE_TTL) return _memCache
+
+  // File cache (CLI invocations)
+  try {
+    const cached = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'))
+    if (Date.now() - cached.time < CACHE_TTL) {
+      _memCache     = cached.models
+      _memCacheTime = cached.time
+      return _memCache
+    }
+  } catch {}
+
+  // Fetch from Ollama
+  try {
+    const res    = await axios.get(`${OLLAMA_BASE}/api/tags`, { timeout: 5000 })
+    const models = (res.data.models || []).map(m => m.name)
+    _memCache     = models
+    _memCacheTime = Date.now()
+    try { fs.writeFileSync(CACHE_FILE, JSON.stringify({ time: _memCacheTime, models })) } catch {}
+    return models
+  } catch {
+    return []
+  }
+}
+
+function profileFor(modelName) {
+  return CAPABILITY_PROFILES.find(p => p.match.test(modelName))
+}
+
+function scoreFor(modelName, task) {
+  return profileFor(modelName)?.scores[task] ?? 0
+}
+
+// ── Model resolution ──────────────────────────────────────────────────────────
+
+async function resolveModel(task) {
+  if (task === 'embedding') return STATIC_FALLBACK.embedding
+
+  const installed = await getInstalledModels()
+  if (!installed.length) return STATIC_FALLBACK[task] || STATIC_FALLBACK.default
+
+  let best      = null
+  let bestScore = -1
+
+  for (const name of installed) {
+    const score = scoreFor(name, task)
+    if (score > bestScore) { bestScore = score; best = name }
   }
 
+  if (!best || bestScore === 0) return resolveModel('default')
+
+  const profile   = profileFor(best)
+  const thinking  = profile?.thinking ?? false
+  return { model: best, thinking, score: bestScore }
+}
+
+// ── Route table (for display / export) ───────────────────────────────────────
+
+const ALL_TASKS = ['extraction', 'linking', 'synthesis', 'dreaming', 'reflection', 'rumination', 'vision', 'embedding', 'default']
+
+async function buildRouteTable() {
+  const table = {}
+  await Promise.all(ALL_TASKS.map(async task => { table[task] = await resolveModel(task) }))
+  return table
+}
+
+// ── ask() ─────────────────────────────────────────────────────────────────────
+
+async function ask({ prompt, task = 'default', model, system, json = false, timeout = 120000 }) {
+  let resolved
+  if (model) {
+    const profile = profileFor(model)
+    resolved = { model, thinking: profile?.thinking ?? false }
+  } else {
+    resolved = await resolveModel(task)
+  }
+
+  const { model: resolvedModel, thinking: isThinking } = resolved
+
+  const body = { prompt, model: resolvedModel, stream: false }
   if (system) body.system = system
-  if (json)   body.format = 'json'
+
+  if (json && isThinking) {
+    body.prompt = prompt + '\n\nRespond with valid JSON only. No markdown, no prose.'
+  } else if (json) {
+    body.format = 'json'
+  }
 
   const response = await axios.post(
     `${OLLAMA_BASE}/api/generate`,
     body,
-    { headers: { 'Content-Type': 'application/json' } }
+    { headers: { 'Content-Type': 'application/json' }, timeout }
   )
 
-  return response.data.response
+  const raw = response.data.response || ''
+  return raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
 }
 
-/**
- * Ask with JSON response parsing — retries once on malformed output.
- * @param {object} opts - same as ask()
- * @returns {Promise<object>}
- */
 async function askJSON(opts) {
   const raw = await ask({ ...opts, json: true })
   try {
     return JSON.parse(raw)
   } catch {
-    // Strip markdown code fences if model wrapped the JSON
     const stripped = raw.replace(/^```(?:json)?\n?/m, '').replace(/\n?```$/m, '').trim()
     return JSON.parse(stripped)
   }
 }
 
-module.exports = { ask, askJSON, ROUTES, OLLAMA_BASE }
+module.exports = { ask, askJSON, resolveModel, buildRouteTable, getInstalledModels, OLLAMA_BASE, ALL_TASKS }
 
-// ── CLI ──────────────────────────────────────────────────────────────────────
+// ── CLI ───────────────────────────────────────────────────────────────────────
 
 if (require.main === module) {
   const args = minimist(process.argv.slice(2), {
-    boolean: ['json-output'],
-    alias: {
-      t: 'task',
-      m: 'model',
-      s: 'system',
-    },
-    default: { task: 'default' }
+    boolean: ['routes'],
+    alias: { t: 'task', m: 'model', s: 'system', r: 'routes' },
+    default: { task: 'default' },
   })
 
   async function main() {
-    let prompt = args._.join(' ').trim()
+    if (args.routes) {
+      const table = await buildRouteTable()
+      const installed = await getInstalledModels()
+      console.log(`\n  Grimoire model router  (${OLLAMA_BASE})\n`)
+      console.log(`  Installed: ${installed.length} model${installed.length === 1 ? '' : 's'}\n`)
+      const width = Math.max(...ALL_TASKS.map(t => t.length))
+      for (const task of ALL_TASKS) {
+        const r = table[task]
+        const flags = [r.thinking ? 'thinking' : '', r.score ? `score:${r.score}` : ''].filter(Boolean).join(', ')
+        console.log(`  ${task.padEnd(width + 2)} → ${r.model}${flags ? `  (${flags})` : ''}`)
+      }
+      console.log()
+      return
+    }
 
+    let prompt = args._.join(' ').trim()
     if (!prompt) {
       prompt = await new Promise(resolve => {
         const lines = []
@@ -120,18 +297,12 @@ if (require.main === module) {
     }
 
     if (!prompt.trim()) {
-      console.error('Usage: model-ask.js <prompt> [--task extraction|linking|dreaming|rumination|analysis]')
-      console.error('Available tasks:', Object.keys(ROUTES).join(', '))
+      console.error(`Usage: model-ask.js <prompt> [--task ${ALL_TASKS.join('|')}]`)
+      console.error('       model-ask.js --routes   Show resolved routing table')
       process.exit(1)
     }
 
-    const result = await ask({
-      prompt,
-      task:   args.task,
-      model:  args.model,
-      system: args.system,
-    })
-
+    const result = await ask({ prompt, task: args.task, model: args.model, system: args.system })
     console.log(result)
   }
 

@@ -25,6 +25,7 @@ const COMMANDS = {
   'think':         { script: 'grim-think.js',         desc: 'Delegate thinking to Ollama            (The Oracle Mind)'   },
   'vision':        { script: 'grim-vision.js',        desc: 'Cast image spells, interrogate images  (The Vision)'      },
   'archaeologist': { script: 'grim-archaeologist.js', desc: 'Catalog old code into the KB            (The Archaeologist)' },
+  'models':        { script: 'grim-models.js',        desc: 'Show resolved model routing table       (The Router)'       },
   'serve':     { script: 'grim-server.js',   desc: 'Start the Grimoire HTTP+MCP server'                },
 }
 
