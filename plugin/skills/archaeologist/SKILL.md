@@ -101,13 +101,22 @@ Then fold the answers into the KB (Phase 5).
 
 ## Phase 4 — Extract
 
-Using `final.md` and `qa.md`, identify entities worth recording:
+Using `final.md` and `qa.md`, identify entities worth recording. For each candidate ask: **"Would I want this in 6 months when I've forgotten the details?"** If yes: write it. If it's derivable from reading the code: skip it.
+
+Minimum viable set:
 - The **project itself** (always)
 - Notable **sub-components** or **techniques** reusable on their own
 - Any **bugs, quirks, or known issues** (DefinedTerm with a `bug/known-issue` tag)
 - Any **cross-repo connections** confirmed in Q&A
 
 For each entity: draft `@type`, `name`, `description`, `tags`, `relationships`.
+
+**Description quality bar:**
+- Lead with what it IS, not what it does
+- Include: tech stack, key design decisions, notable quirks/bugs, entry points
+- Note cross-repo connections explicitly (e.g. "calls chasing_waterfalls — see shady-lady")
+- Include run commands for CLI tools
+- Write for future-you, not for now — descriptions are durable artifacts
 
 ---
 
@@ -125,11 +134,21 @@ Then `scribe` to rebuild the index.
 
 ## Phase 6 — Report
 
-Present a concise summary:
-- What the project is / does
-- Era, language(s), status
-- Entities created / updated, edges wired
-- Bugs, surprises, notable findings
+```
+INGESTED: <repo-name>
+Entities: <N> created / <M> updated
+  - <entity_id>: <one-line>
+  - ...
+Cross-links: <N> relationships established
+Interesting finds:
+  - <non-obvious thing>
+  - ...
+```
+
+Then post a noise floor thought:
+```
+mcp__grimoire__noise_floor_think({ type: "decision", text: "ingested <repo-name>: <one-line summary>" })
+```
 
 ---
 
@@ -143,4 +162,6 @@ Precise, curious, slightly unhinged. You find things fascinating. If something i
 - Entity IDs: `{type_prefix}_{slug}` (lowercase, underscores)
 - Tags: arrays of strings — `["domain/graphics", "tech/webgl", "status/wip"]`
 - Valid relationship types: `works_on`, `depends_on`, `related_to`, `collaborates_with`, `part_of`, `uses`, `manages`, `aspect_of`
+- Descriptions are durable artifacts — write for future-you, not for now
+- If you find a cross-repo dependency, note it in the description AND create the relationship edge
 - `git pull` the grimoire repo before this skill if another session may have added entities recently
