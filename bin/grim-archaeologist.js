@@ -22,6 +22,7 @@
 
 const fs       = require('node:fs')
 const path     = require('node:path')
+const os       = require('node:os')
 const { execSync } = require('node:child_process')
 const minimist = require('minimist')
 const { ask }        = require('./model-ask')
@@ -93,9 +94,38 @@ function slug(name) {
 }
 
 function archDir(projectDir) {
-  const grimRoot = process.env.GRIMOIRE_ROOT || path.join(__dirname, '..', '..', 'grimoire-kb')
   const name = path.basename(path.resolve(projectDir))
-  return path.join(grimRoot, 'archaeology', slug(name))
+  // On server: write directly into KB. On clients: stage in /tmp.
+  const base = process.env.GRIMOIRE_ROOT
+    ? path.join(process.env.GRIMOIRE_ROOT, 'archaeology')
+    : path.join(os.tmpdir(), 'grimoire-archaeology')
+  return path.join(base, slug(name))
+}
+
+async function pushArtifacts(outDir, slugName) {
+  const host = process.env.GRIMOIRE_HOST
+  if (!host) return
+
+  const axios = require('axios')
+  const upload = async (filename, content) => {
+    try {
+      await axios.post(`${host}/api/archaeology/upload`, { slug: slugName, filename, content },
+        { headers: { 'Content-Type': 'application/json' }, timeout: 15000 })
+    } catch (e) {
+      console.warn(`  ⚠ push failed (${filename}): ${e.message}`)
+    }
+  }
+
+  // Walk the outDir and upload everything
+  function walk(dir, base = '') {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const rel = base ? `${base}/${e.name}` : e.name
+      if (e.isDirectory()) walk(path.join(dir, e.name), rel)
+      else upload(rel, fs.readFileSync(path.join(dir, e.name), 'utf8'))
+    }
+  }
+  walk(outDir)
+  console.log(`  → pushed to ${host}`)
 }
 
 function ensureDir(d) {
@@ -371,15 +401,23 @@ async function runSynthesis(projectDir, opts = {}) {
 }
 
 async function runDig(projectDir, opts = {}) {
-  const name = path.basename(path.resolve(projectDir))
+  const name     = path.basename(path.resolve(projectDir))
+  const slugName = slug(name)
   console.log(`\n  ⛏  The Archaeologist descends into ${name}\n`)
 
   await runOverview(projectDir, opts)
   await runFilePass(projectDir, opts)
   const result = await runSynthesis(projectDir, opts)
 
-  const finalPath = path.join(result.outDir, 'final.md')
-  console.log(`\n  ✓ Dig complete. Read the synthesis:\n    ${finalPath}\n`)
+  await pushArtifacts(result.outDir, slugName)
+
+  const host = process.env.GRIMOIRE_HOST
+  if (host) {
+    console.log(`\n  ✓ Dig complete + pushed to ${host}`)
+    console.log(`  Backlog: ${host}/api/archaeology/backlog\n`)
+  } else {
+    console.log(`\n  ✓ Dig complete. Read the synthesis:\n    ${path.join(result.outDir, 'final.md')}\n`)
+  }
   console.log(`  Next: /archaeologist reads final.md, asks Q&A, writes KB entities\n`)
 
   return result
@@ -595,9 +633,30 @@ async function analyzeProject(projectDir, opts = {}) {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-function showBacklog() {
-  const grimRoot  = process.env.GRIMOIRE_ROOT || path.join(__dirname, '..', '..', 'grimoire-kb')
-  const archRoot  = path.join(grimRoot, 'archaeology')
+async function showBacklog() {
+  // If GRIMOIRE_HOST set, query the server
+  const host = process.env.GRIMOIRE_HOST
+  if (host) {
+    const axios = require('axios')
+    try {
+      const res = await axios.get(`${host}/api/archaeology/backlog`, { timeout: 5000 })
+      const { backlog } = res.data
+      console.log(`\n  ⛏  Archaeology backlog  (${host})\n`)
+      const pending = backlog.filter(e => e.status !== 'integrated')
+      const done    = backlog.filter(e => e.status === 'integrated')
+      if (pending.length) {
+        console.log(`  Pending (${pending.length}):`)
+        for (const e of pending) console.log(`    ${e.slug.padEnd(35)} [${e.status}]`)
+      } else console.log('  No pending items.')
+      if (done.length) console.log(`\n  Done (${done.length}): ${done.map(e => e.slug).join(', ')}`)
+      console.log()
+    } catch (e) { console.error(`  ✗ Could not reach ${host}: ${e.message}`) }
+    return
+  }
+
+  const archRoot = process.env.GRIMOIRE_ROOT
+    ? path.join(process.env.GRIMOIRE_ROOT, 'archaeology')
+    : path.join(os.tmpdir(), 'grimoire-archaeology')
 
   if (!fs.existsSync(archRoot)) {
     console.log('  No archaeology directory found.')

@@ -19,9 +19,14 @@
  *   POST /api/tome/relate        → add relationship
  *   POST /api/tome/annotate      → annotate entity
  *   POST /api/scribe             → rebuild graph index + bust cache
- *   POST /noise-floor/think      → add thought to stream
- *   GET  /noise-floor/context    → get recent thoughts
- *   POST /mcp                    → MCP Streamable HTTP transport
+ *   POST /api/crawl                      → extract entities from text/code, write to KB
+ *   POST /noise-floor/think             → add thought to stream
+ *   GET  /noise-floor/context           → get recent thoughts
+ *   POST /api/archaeology/upload        → upload dig artifact (overview/files/final)
+ *   GET  /api/archaeology/backlog       → list pending/stale/integrated entries
+ *   POST /api/archaeology/:slug/integrate → mark KB pass complete
+ *   GET  /api/archaeology/:slug/:file   → fetch artifact content
+ *   POST /mcp                           → MCP Streamable HTTP transport
  *
  * Run on aid: node bin/grim-server.js
  */
@@ -35,7 +40,8 @@ const { loadGraph }      = require('../lib/graph')
 const { runChecks, computeScore } = require('./grim-divine')
 const { search }         = require('./grim-oracle')
 const { loadBriefing, saveSession } = require('./grim-session')
-const { recall, remember, relate, annotate } = require('./grim-tome')
+const { recall, remember, update, relate, annotate } = require('./grim-tome')
+const { crawlText } = require('./grim-crawl')
 const { config, requireMode } = require('../lib/env')
 const { semanticSearch, indexReady } = require('../lib/vectors')
 
@@ -185,6 +191,18 @@ app.post('/api/tome/remember', async (req, res) => {
   }
 })
 
+app.post('/api/tome/update', async (req, res) => {
+  try {
+    const { id, ...patches } = req.body
+    if (!id) return res.status(400).json({ error: 'id required' })
+    const result = await update(id, patches)
+    _graphCache = null
+    res.json(result)
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 app.post('/api/tome/relate', async (req, res) => {
   try {
     const { fromId, toId, relationType } = req.body
@@ -210,6 +228,106 @@ app.post('/api/tome/annotate', async (req, res) => {
 })
 
 // ── Noise Floor ───────────────────────────────────────────────────────────────
+
+app.post('/api/crawl', async (req, res) => {
+  try {
+    const { text, source = 'api', language = null, dryRun = false, noNer = false } = req.body
+    if (!text || !text.trim()) return res.status(400).json({ error: 'text required' })
+    const result = await crawlText({ text, source, language, dryRun, noNer })
+    if (!dryRun && result.entitiesCreated > 0) {
+      _graphCache    = null
+      _graphCachedAt = 0
+    }
+    res.json(result)
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// ── Archaeology ───────────────────────────────────────────────────────────────
+
+const ARCH_ROOT = path.join(config.root, 'archaeology')
+
+function archStatusPath(slug) { return path.join(ARCH_ROOT, slug, 'status.json') }
+
+function loadArchStatus(slug) {
+  try { return JSON.parse(fs.readFileSync(archStatusPath(slug), 'utf8')) } catch { return null }
+}
+
+function saveArchStatus(slug, data) {
+  fs.writeFileSync(archStatusPath(slug), JSON.stringify(data, null, 2))
+}
+
+function archBacklog() {
+  if (!fs.existsSync(ARCH_ROOT)) return []
+  return fs.readdirSync(ARCH_ROOT)
+    .filter(d => fs.statSync(path.join(ARCH_ROOT, d)).isDirectory())
+    .map(slug => {
+      const dir    = path.join(ARCH_ROOT, slug)
+      const status = loadArchStatus(slug)
+      const hasFinal = fs.existsSync(path.join(dir, 'final.md'))
+      const hasOvr   = fs.existsSync(path.join(dir, 'overview.md'))
+      return {
+        slug,
+        status:       status?.status || (hasFinal ? 'pending' : hasOvr ? 'dig-in-progress' : 'empty'),
+        uploadedAt:   status?.uploadedAt,
+        integratedAt: status?.integratedAt,
+        hasFinal,
+      }
+    })
+}
+
+// Upload a single artifact file for a slug
+app.post('/api/archaeology/upload', (req, res) => {
+  const { slug, filename, content } = req.body
+  if (!slug || !filename || content == null) return res.status(400).json({ error: 'slug, filename, content required' })
+
+  const safeSlug = slug.replace(/[^a-z0-9_-]/gi, '_')
+  const dir = path.join(ARCH_ROOT, safeSlug)
+
+  // Files can be nested (e.g. "files/foo.js.md") — create subdirs
+  const dest = path.join(dir, filename)
+  fs.mkdirSync(path.dirname(dest), { recursive: true })
+  fs.writeFileSync(dest, content, 'utf8')
+
+  // Update status when final.md arrives
+  if (filename === 'final.md') {
+    const hash    = require('node:crypto').createHash('sha256').update(content).digest('hex').slice(0, 12)
+    const current = loadArchStatus(safeSlug)
+    const wasIntegrated = current?.status === 'integrated'
+    const changed = current?.finalHash && current.finalHash !== hash
+    saveArchStatus(safeSlug, {
+      status:       wasIntegrated && changed ? 'stale' : current?.status === 'integrated' ? 'integrated' : 'pending',
+      uploadedAt:   new Date().toISOString(),
+      integratedAt: current?.integratedAt || null,
+      finalHash:    hash,
+    })
+  }
+
+  res.json({ ok: true, path: path.relative(ARCH_ROOT, dest) })
+})
+
+// List backlog
+app.get('/api/archaeology/backlog', (req, res) => {
+  res.json({ backlog: archBacklog() })
+})
+
+// Mark a slug as integrated (called after KB pass completes)
+app.post('/api/archaeology/:slug/integrate', (req, res) => {
+  const { slug } = req.params
+  const current  = loadArchStatus(slug)
+  if (!current) return res.status(404).json({ error: 'not found' })
+  saveArchStatus(slug, { ...current, status: 'integrated', integratedAt: new Date().toISOString() })
+  res.json({ ok: true })
+})
+
+// Get a specific artifact (so Claude can read final.md remotely)
+app.get('/api/archaeology/:slug/:filename(*)', (req, res) => {
+  const { slug, filename } = req.params
+  const filePath = path.join(ARCH_ROOT, slug, filename)
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'not found' })
+  res.type('text/plain').send(fs.readFileSync(filePath, 'utf8'))
+})
 
 app.post('/noise-floor/think', (req, res) => {
   const { text, source = 'unknown', type = 'observation' } = req.body
@@ -277,6 +395,21 @@ const MCP_TOOLS = [
     },
   },
   {
+    name: 'tome_update',
+    description: 'Update an existing entity in the Grimoire knowledge graph. Only provided fields are changed; omitted fields are preserved.',
+    inputSchema: {
+      type: 'object',
+      required: ['id'],
+      properties: {
+        id:            { type: 'string', description: 'Target entity ID (e.g. project_redux_mmllm)' },
+        name:          { type: 'string', description: 'Replace the entity name' },
+        description:   { type: 'string', description: 'Replace the entity description' },
+        tags:          { type: 'array', items: { type: 'string' }, description: 'Replace the tag array' },
+        relationships: { type: 'object', description: 'Merge into existing edges: { "related_to": ["other_id"] }' },
+      },
+    },
+  },
+  {
     name: 'tome_relate',
     description: 'Add a typed relationship edge between two existing entities.',
     inputSchema: {
@@ -332,6 +465,21 @@ const MCP_TOOLS = [
     description: 'Rebuild the graph index from entity files on disk and bust the server cache. Use after direct file edits.',
     inputSchema: { type: 'object', properties: {} },
   },
+  {
+    name: 'crawl',
+    description: 'Extract entities from raw text or source code and write them to the KB. Handles prose (notes, diary) and code (JS, Python, Bash, Java). Extracts concepts, components, leverage points, and expansion vectors.',
+    inputSchema: {
+      type: 'object',
+      required: ['text'],
+      properties: {
+        text:     { type: 'string', description: 'Raw text or source code to ingest' },
+        source:   { type: 'string', description: 'Filename or label for provenance (e.g. "server.js", "diary-2026-04-18.md")' },
+        language: { type: 'string', description: 'Override language detection: javascript | python | bash | java | text' },
+        dryRun:   { type: 'boolean', description: 'Preview extracted entities without writing to KB' },
+        noNer:    { type: 'boolean', description: 'Skip GLiNER NER pre-pass (faster, prose only)' },
+      },
+    },
+  },
 ]
 
 async function executeMCPTool(name, args) {
@@ -356,6 +504,13 @@ async function executeMCPTool(name, args) {
     case 'tome_remember': {
       const { type, ...rest } = args
       const result = await remember({ '@type': type, ...rest })
+      _graphCache  = null
+      return result
+    }
+
+    case 'tome_update': {
+      const { id, ...patches } = args
+      const result = await update(id, patches)
       _graphCache  = null
       return result
     }
@@ -397,6 +552,21 @@ async function executeMCPTool(name, args) {
       _graphCachedAt = 0
       const graph    = await getGraph()
       return { ok: true, entities: Object.keys(graph.entities).length, edges: graph._meta?.edgeCount ?? 0 }
+    }
+
+    case 'crawl': {
+      const result = await crawlText({
+        text:     args.text,
+        source:   args.source   || 'mcp',
+        language: args.language || null,
+        dryRun:   args.dryRun   ?? false,
+        noNer:    args.noNer    ?? false,
+      })
+      if (!args.dryRun && result.entitiesCreated > 0) {
+        _graphCache    = null
+        _graphCachedAt = 0
+      }
+      return result
     }
 
     default:
