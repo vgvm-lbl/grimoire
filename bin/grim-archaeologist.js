@@ -26,7 +26,17 @@ const { execSync } = require('node:child_process')
 const minimist = require('minimist')
 const { ask }        = require('./model-ask')
 const { loadGraph }  = require('../lib/graph')
-const { nerAvailable, extractEntities } = require('../lib/ner-client')
+
+// Optional — only used in legacy --source bulk mode
+let _ner = null
+function ner() {
+  if (!_ner) {
+    try { _ner = require('../lib/ner-client') } catch { _ner = { nerAvailable: async () => false, extractEntities: async () => [] } }
+  }
+  return _ner
+}
+const nerAvailable   = (...a) => ner().nerAvailable(...a)
+const extractEntities = (...a) => ner().extractEntities(...a)
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
