@@ -26,6 +26,7 @@ const COMMANDS = {
   'vision':        { script: 'grim-vision.js',        desc: 'Cast image spells, interrogate images  (The Vision)'      },
   'archaeologist': { script: 'grim-archaeologist.js', desc: 'Catalog old code into the KB            (The Archaeologist)' },
   'models':        { script: 'grim-models.js',        desc: 'Show resolved model routing table       (The Router)'       },
+  'council':       { script: 'grim-council.js',       desc: 'Five experts argue about a topic        (The Council)'       },
   'serve':     { script: 'grim-server.js',   desc: 'Start the Grimoire HTTP+MCP server'                },
 }
 

@@ -38,7 +38,7 @@ const cors    = require('cors')
 
 const { loadGraph }      = require('../lib/graph')
 const { runChecks, computeScore } = require('./grim-divine')
-const { search }         = require('./grim-oracle')
+const { search, enrichWithContext } = require('./grim-oracle')
 const { loadBriefing, saveSession } = require('./grim-session')
 const { recall, remember, update, relate, annotate } = require('./grim-tome')
 const { crawlText } = require('./grim-crawl')
@@ -406,6 +406,7 @@ const MCP_TOOLS = [
         description:   { type: 'string', description: 'Replace the entity description' },
         tags:          { type: 'array', items: { type: 'string' }, description: 'Replace the tag array' },
         relationships: { type: 'object', description: 'Merge into existing edges: { "related_to": ["other_id"] }' },
+        lastVerified:  { type: 'boolean', description: 'Stamp metadata.lastVerified with today — marks entity as confirmed accurate' },
       },
     },
   },
@@ -418,7 +419,7 @@ const MCP_TOOLS = [
       properties: {
         fromId:       { type: 'string' },
         toId:         { type: 'string' },
-        relationType: { type: 'string', description: 'works_on | depends_on | related_to | collaborates_with | part_of | uses | manages | aspect_of' },
+        relationType: { type: 'string', description: 'works_on | depends_on | related_to | collaborates_with | part_of | uses | manages | aspect_of | superseded_by' },
       },
     },
   },
@@ -493,7 +494,10 @@ async function executeMCPTool(name, args) {
         depth: Number(args.depth || 0),
         limit: Number(args.limit || 10),
       })
-      return { results: results.map(r => ({ ...r.entity, _score: r.score, _hops: r.hops })) }
+      return { results: results.map(r => {
+        enrichWithContext(r, graph)
+        return { ...r.entity, _score: r.score, _hops: r.hops, _context: r._context }
+      })}
     }
 
     case 'tome_recall': {

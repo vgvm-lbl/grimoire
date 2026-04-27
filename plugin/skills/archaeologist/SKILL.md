@@ -22,8 +22,9 @@ Ollama handles the token-heavy work. Claude handles reasoning and KB writes.
 Phase 1   grim archaeologist --dig (Ollama)  →  archaeology/{slug}/overview.md
 Phase 2   grim archaeologist --dig (Ollama)  →  archaeology/{slug}/files/*.md
 Phase 3   grim archaeologist --dig (Ollama)  →  archaeology/{slug}/final.md
-Phase 3.5 Claude Q&A                         →  archaeology/{slug}/qa.md
-Phase 4   Claude reads final.md + qa.md      →  extract entity list
+Phase 3.5 grim council (optional)            →  archaeology/{slug}/council.md
+Phase 3.6 Claude Q&A                         →  archaeology/{slug}/qa.md
+Phase 4   Claude reads final.md + council.md + qa.md  →  extract entity list
 Phase 5   Claude writes KB                   →  tome_remember / tome_update / tome_relate
 Phase 6   Claude reports                     →  summary to user
 ```
@@ -74,7 +75,29 @@ Note what exists and what connections would improve the KB.
 
 ---
 
-## Phase 3.5 — The Q&A Session
+## Phase 3.5 — Council Review (optional but recommended)
+
+Before Q&A, run the Council on the synthesis. This challenges the Ollama output with five adversarial expert voices and surfaces disagreements worth investigating.
+
+```bash
+grim council "Review this archaeology synthesis and find what it missed, got wrong, or glossed over" \
+  --file {outDir}/final.md
+```
+
+Save the output to `council.md`:
+```bash
+grim council "..." --file {outDir}/final.md --json > {outDir}/council.json
+# or pipe the human output:
+grim council "..." --file {outDir}/final.md 2>&1 | tee {outDir}/council.md
+```
+
+Read `council.md` before forming Q&A questions. The **HOTTEST CONFLICT** and **THE UNCOMFORTABLE QUESTION** sections are prime Q&A material — the Council often surfaces tensions the synthesis glossed over.
+
+Skip this phase if the repo is small/simple or you're in a hurry. It adds ~3 minutes.
+
+---
+
+## Phase 3.6 — The Q&A Session
 
 This is not a debrief. This is a conversation.
 
@@ -109,7 +132,7 @@ Then fold the answers into the KB (Phase 5).
 
 ## Phase 4 — Extract
 
-Using `final.md` and `qa.md`, identify entities worth recording. For each candidate ask: **"Would I want this in 6 months when I've forgotten the details?"** If yes: write it. If it's derivable from reading the code: skip it.
+Using `final.md`, `council.md` (if run), and `qa.md`, identify entities worth recording. For each candidate ask: **"Would I want this in 6 months when I've forgotten the details?"** If yes: write it. If it's derivable from reading the code: skip it.
 
 Minimum viable set:
 - The **project itself** (always)

@@ -48,6 +48,67 @@ function mostRecent(entities, n = 3) {
     .slice(0, n)
 }
 
+// ── Cognitive state helpers ───────────────────────────────────────────────────
+
+function loadCognitiveState(graph) {
+  return loadEntityById('meta_cognitive_state', graph)
+}
+
+function saveCognitiveState(updates, graph) {
+  const state = loadCognitiveState(graph) || {
+    '@type': 'CognitiveState', '@id': 'meta_cognitive_state',
+    name: 'Cognitive State', affect: {}, narrative: {}, episodes: [],
+    metacognition: { confidence: 0.5, uncertainties: [], corrections: [] },
+    workingMemory: { currentFocus: '', nextSteps: [] },
+    tags: ['meta/cognitive-state', 'meta/affect'],
+    relationships: { aspect_of: ['meta_agent_grimoire'] },
+    metadata: { dateCreated: new Date().toISOString().slice(0, 10), source: 'session-end' },
+  }
+  Object.assign(state, updates)
+  state.metadata.dateModified = new Date().toISOString().slice(0, 10)
+  saveEntity('meta_cognitive_state', state, graph)
+  return state
+}
+
+// Heuristic affect assessment from session events (no API call required)
+function assessAffect(sessionEntity) {
+  let valence   = 0.5
+  let arousal   = 0.5
+  let dominance = 0.6
+
+  const summary   = (sessionEntity.summary   || '').toLowerCase()
+  const learned   = (sessionEntity.learned   || []).join(' ').toLowerCase()
+  const decisions = (sessionEntity.decisions || []).join(' ').toLowerCase()
+  const text      = [summary, learned, decisions].join(' ')
+
+  // Valence signals
+  if (/fixed|solved|working|success|done|shipped|clean|love|great|nice|awesome/.test(text)) valence += 0.2
+  if (/bug|error|broken|failed|crash|stuck|blocked|frustrat|wrong/.test(text))             valence -= 0.15
+  if (/refactor|cleanup|tidy|polish/.test(text))                                            valence += 0.1
+
+  // Arousal signals
+  if (/build|create|design|architect|new|impl|add/.test(text)) arousal += 0.15
+  if (/routine|update|tweak|small|minor|patch/.test(text))     arousal -= 0.15
+  if (/insight|discover|realiz|found|breakthrough/.test(text)) arousal += 0.25
+
+  // Dominance signals
+  if (/root cause|understand|figured|know why/.test(text)) dominance += 0.15
+  if (/gave up|workaround|hack|unclear|unsure/.test(text)) dominance -= 0.2
+
+  valence   = Math.max(-1, Math.min(1, valence))
+  arousal   = Math.max(-1, Math.min(1, arousal))
+  dominance = Math.max(-1, Math.min(1, dominance))
+
+  const label = valence > 0.6 && arousal > 0.5  ? 'engaged and building'
+              : valence > 0.6 && arousal <= 0.5  ? 'satisfied and settled'
+              : valence > 0.3 && arousal > 0.5   ? 'focused'
+              : valence > 0.3                     ? 'neutral'
+              : arousal > 0.5                     ? 'frustrated but pushing'
+              :                                     'drained'
+
+  return { valence: +valence.toFixed(2), arousal: +arousal.toFixed(2), dominance: +dominance.toFixed(2), label }
+}
+
 // ── Briefing (grim load) ──────────────────────────────────────────────────────
 
 async function loadBriefing() {
@@ -59,8 +120,9 @@ async function loadBriefing() {
   requireMode('local')
   const graph = await loadGraph()
 
-  const agentModel = loadEntityById('meta_agent_grimoire', graph)
-  const userModel  = loadEntityById('meta_user_model',     graph)
+  const agentModel    = loadEntityById('meta_agent_grimoire',   graph)
+  const userModel     = loadEntityById('meta_user_model',       graph)
+  const cognitiveState = loadCognitiveState(graph)
 
   // Find interrupted sessions (started but not ended)
   const sessions     = allEntitiesOfType('Session', graph)
@@ -87,9 +149,16 @@ async function loadBriefing() {
   const goalIds    = graph.tags['meta/goal'] || []
   const activeGoals = goalIds.map(id => graph.entities[id]).filter(Boolean)
 
+  // Recent episodes (high-salience only for briefing)
+  const recentEpisodes = (cognitiveState?.episodes || [])
+    .filter(e => e.salience === 'high')
+    .slice(-3)
+
   return {
     agentModel,
     userModel,
+    cognitiveState,
+    recentEpisodes,
     interruptedSession: interrupted[0] || null,
     recentSessions,
     recentDreams,
@@ -160,7 +229,38 @@ async function saveSession({ topic, summary, learned = [], nextSteps = [], decis
     open.nextSteps = nextSteps
     if (topic) open.topic = topic
     saveEntity(open['@id'], open, graph)
-    return { ok: true, id: open['@id'], endedAt: now }
+
+    // Update CognitiveState with new affect + episode
+    const affect = assessAffect(open)
+    const state  = loadCognitiveState(graph)
+    if (state) {
+      state.affect = {
+        ...affect,
+        lastUpdated:    now.slice(0, 10),
+        sessionSummary: summary,
+      }
+      state.workingMemory = {
+        currentFocus: topic || open.topic || '',
+        nextSteps,
+      }
+      // Append episode (cap at 50, never evict high-salience)
+      const ep = {
+        date:     now.slice(0, 10),
+        summary,
+        salience: learned.length > 2 || decisions.length > 1 ? 'high' : 'medium',
+        tags:     ['session-end'],
+        affect:   { valence: affect.valence, label: affect.label },
+      }
+      state.episodes = [
+        ...(state.episodes || []).filter(e => e.salience === 'high').slice(-40),
+        ...(state.episodes || []).filter(e => e.salience !== 'high').slice(-9),
+        ep,
+      ].sort((a, b) => a.date > b.date ? 1 : -1)
+      state.metadata.dateModified = now.slice(0, 10)
+      saveEntity('meta_cognitive_state', state, graph)
+    }
+
+    return { ok: true, id: open['@id'], endedAt: now, affect }
   }
 
   // No open session — create a completed one
@@ -258,13 +358,28 @@ function formatBriefing(b) {
   }
 
   if (b.agentModel) {
-    console.log(`  Identity : ${b.agentModel.name || 'Grimoire'}`)
-    const id = b.agentModel.identity || {}
-    if (id.role) console.log(`  Role     : ${id.role}`)
+    const id  = b.agentModel.identity || {}
+    const aff = b.cognitiveState?.affect
+    const affStr = aff ? `  ${aff.label}  (v:${aff.valence} a:${aff.arousal ?? '?'} d:${aff.dominance ?? '?'})` : ''
+    console.log(`  Identity : ${b.agentModel.name || 'Grimoire'}${affStr}`)
+    if (id.role)    console.log(`  Role     : ${id.role}`)
+    if (id.chapter) console.log(`  Chapter  : ${id.chapter}`)
+  }
+
+  if (b.cognitiveState?.narrative?.trajectory) {
+    const n = b.cognitiveState.narrative
+    console.log(`  Arc      : ${n.trajectory}${n.themes?.length ? '  [' + n.themes.slice(0,3).join(', ') + ']' : ''}`)
   }
 
   if (b.userModel?.identity?.name) {
     console.log(`  User     : ${b.userModel.identity.name} (${b.userModel.identity.role || ''})`)
+  }
+
+  if (b.recentEpisodes?.length) {
+    console.log(`\n  Recent episodes:`)
+    for (const ep of b.recentEpisodes) {
+      console.log(`    • ${ep.date}  ${ep.affect?.label ? '[' + ep.affect.label + ']' : ''}  ${ep.summary.slice(0, 80)}`)
+    }
   }
 
   if (b.recentDreams?.length) {

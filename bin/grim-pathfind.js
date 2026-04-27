@@ -25,6 +25,7 @@ const { ask }         = require('./model-ask')
 const { loadGraph, loadEntity, saveEntity } = require('../lib/graph')
 const { scribe }      = require('./grim-scribe')
 const { requireMode } = require('../lib/env')
+const { extractRelations, nerAvailable } = require('../lib/ner-client')
 
 requireMode('local')
 
@@ -55,7 +56,22 @@ Only suggest edges you are confident about. Do not hallucinate connections.`
 
 // ── Core ──────────────────────────────────────────────────────────────────────
 
-async function pathfind({ batchSize = 20, dryRun = false, verbose = false } = {}) {
+async function rebelEnrichOrphans(orphanData, graph) {
+  const enriched = []
+  for (const o of orphanData) {
+    const text = [o.name, o.description].filter(Boolean).join('. ')
+    if (!text || text.length < 10) { enriched.push(o); continue }
+    const triples = await extractRelations(text)
+    if (triples.length) {
+      enriched.push({ ...o, rebel_triples: triples })
+    } else {
+      enriched.push(o)
+    }
+  }
+  return enriched
+}
+
+async function pathfind({ batchSize = 20, dryRun = false, verbose = false, noNer = false } = {}) {
   const graph = await loadGraph()
 
   // Find orphans
@@ -81,10 +97,16 @@ async function pathfind({ batchSize = 20, dryRun = false, verbose = false } = {}
     .filter(id => connected.has(id))
     .slice(0, 30)
 
-  const orphanData  = batch.map(id => ({
+  let orphanData = batch.map(id => ({
     '@id': id, '@type': graph.entities[id]['@type'], name: graph.entities[id].name,
     description: graph.entities[id].description, tags: graph.entities[id].tags,
   }))
+
+  // Enrich orphans with Rebel relation triples when NER service is available
+  if (!noNer && await nerAvailable()) {
+    if (verbose) console.log('  Rebel enriching orphans...')
+    orphanData = await rebelEnrichOrphans(orphanData, graph)
+  }
 
   const contextData = contextIds.map(id => ({
     '@id': id, '@type': graph.entities[id]['@type'], name: graph.entities[id].name,
@@ -176,7 +198,7 @@ async function pathfind({ batchSize = 20, dryRun = false, verbose = false } = {}
 
 async function main() {
   const args = minimist(process.argv.slice(3), {
-    boolean: ['dry-run', 'json', 'verbose'],
+    boolean: ['dry-run', 'json', 'verbose', 'no-ner'],
     alias:   { j: 'json', v: 'verbose', n: 'dry-run', b: 'batch' },
     default: { batch: 20 },
   })
@@ -185,6 +207,7 @@ async function main() {
     batchSize: Number(args.batch),
     dryRun:    args['dry-run'],
     verbose:   args.verbose,
+    noNer:     args['no-ner'],
   })
 
   if (args.json) {
@@ -201,6 +224,6 @@ async function main() {
   }
 }
 
-main().catch(e => { console.error(e.message); process.exit(1) })
-
 module.exports = { pathfind }
+
+if (require.main === module) main().catch(e => { console.error(e.message); process.exit(1) })

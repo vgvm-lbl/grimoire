@@ -99,10 +99,11 @@ async function longRest({ dryRun = false } = {}) {
   process.stdout.write(`  The GM is dreaming... `)
 
   const raw = await ask({
-    prompt: dreamPrompt(stats, recentIds, orphanSample, denseTags),
-    system: GM_SYSTEM,
-    task:   'dreaming',
-    json:   true,
+    prompt:  dreamPrompt(stats, recentIds, orphanSample, denseTags),
+    system:  GM_SYSTEM,
+    task:    'dreaming',
+    json:    true,
+    timeout: 300000,  // 5 min — thinking models need time on complex prompts
   })
 
   console.log('done.\n')

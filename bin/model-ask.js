@@ -43,7 +43,7 @@ if (!process.env.OLLAMA_HOST) {
   }
 }
 
-const OLLAMA_BASE = process.env.OLLAMA_HOST || 'http://aid:11434'
+const OLLAMA_BASE = process.env.OLLAMA_HOST || 'http://chonko:11434'
 
 // ── Capability profiles ───────────────────────────────────────────────────────
 // Matched in order — first pattern wins. Scores are per task type (0-10).

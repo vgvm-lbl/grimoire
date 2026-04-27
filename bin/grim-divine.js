@@ -37,6 +37,10 @@ function runChecks(graph, { check = null, fix = false } = {}) {
   const edges      = graph.edges     || []
   const entityIds  = new Set(Object.keys(entities))
 
+  const STALE_DAYS  = 90
+  const staleMs     = STALE_DAYS * 24 * 60 * 60 * 1000
+  const now         = Date.now()
+
   const results = {
     entityCount:   entityIds.size,
     edgeCount:     edges.length,
@@ -45,6 +49,7 @@ function runChecks(graph, { check = null, fix = false } = {}) {
     missingFields: [],
     idMismatches:  [],
     emptyEntities: [],
+    staleEntities: [],
   }
 
   // ── Broken edges ─────────────────────────────────────────────────────────
@@ -85,6 +90,16 @@ function runChecks(graph, { check = null, fix = false } = {}) {
       if (!entity.description || entity.description.trim().length < 5) {
         results.emptyEntities.push(id)
       }
+    }
+  }
+
+  // ── Stale entities (not touched in STALE_DAYS) ───────────────────────────
+  if (!check || check === 'stale') {
+    for (const [id, entity] of Object.entries(entities)) {
+      const modified = entity.metadata?.dateModified || entity.metadata?.dateCreated
+      if (!modified) continue
+      const age = now - new Date(modified).getTime()
+      if (age > staleMs) results.staleEntities.push({ id, daysSince: Math.floor(age / (24 * 60 * 60 * 1000)) })
     }
   }
 
@@ -145,6 +160,7 @@ function formatHuman(r, { score, grade, density }) {
   section('Orphan entities', r.orphans,        id => id)
   section('Missing fields',  r.missingFields,  m => `${m.id}: ${m.missing.join(', ')}`)
   section('Empty entities',  r.emptyEntities,  id => id)
+  section('Stale entities',  r.staleEntities,  s => `${s.id}  (${s.daysSince}d ago)`)
   if (isLocal) {
     section('ID/file mismatches', r.idMismatches, m => `${m.id}: expected ${m.expected}, got ${m.actual}`)
   }

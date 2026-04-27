@@ -113,6 +113,50 @@ async function annotate(entityId, note) {
   requireMode('any')
 }
 
+async function update(entityId, patches) {
+  if (isLocal) {
+    const graph = await loadGraph()
+    if (!graph.entities[entityId]) throw new Error(`Entity not found: ${entityId}`)
+
+    const entity = loadEntity(entityId, graph)
+
+    if (patches.name          !== undefined) entity.name        = patches.name
+    if (patches.description   !== undefined) entity.description = patches.description
+    if (patches.tags          !== undefined) entity.tags        = patches.tags
+    if (patches.lastVerified  === true) {
+      entity.metadata = entity.metadata || {}
+      entity.metadata.lastVerified = new Date().toISOString().slice(0, 10)
+    }
+
+    if (patches.relationships) {
+      entity.relationships = entity.relationships || {}
+      for (const [rel, targets] of Object.entries(patches.relationships)) {
+        const existing = entity.relationships[rel]
+        const incoming = Array.isArray(targets) ? targets : [targets]
+        if (!existing) {
+          entity.relationships[rel] = incoming
+        } else {
+          const base = Array.isArray(existing) ? existing : [existing]
+          entity.relationships[rel] = [...new Set([...base, ...incoming])]
+        }
+      }
+    }
+
+    saveEntity(entityId, entity, graph)
+
+    const { scribe } = require('./grim-scribe')
+    scribe()
+    return { ok: true, id: entityId }
+  }
+
+  if (isRemote) {
+    const res = await axios.post(`${config.host}/api/tome/update`, { id: entityId, ...patches })
+    return res.data
+  }
+
+  requireMode('any')
+}
+
 async function forget(entityId) {
   requireMode('local')
 
@@ -217,6 +261,23 @@ async function main() {
       break
     }
 
+    case 'update': {
+      const [entityId] = args._
+      if (!entityId) {
+        console.error('Usage: grim tome update <entityId> [--name <name>] [--desc <desc>] [--tags tag1,tag2]')
+        process.exit(1)
+      }
+      const patches = {}
+      if (args.name !== undefined) patches.name        = args.name
+      if (args.desc !== undefined) patches.description = args.desc
+      if (args.tags !== undefined) patches.tags        = args.tags.split(',').map(t => t.trim())
+      const result = await update(entityId, patches)
+      if (args.json) console.log(JSON.stringify(result, null, 2))
+      else if (result.ok) console.log(`  Updated: ${result.id}`)
+      else console.log(`  Error: ${result.reason || 'unknown'}`)
+      break
+    }
+
     case 'forget': {
       const [entityId] = args._
       if (!entityId) { console.error('Usage: grim tome forget <entityId>'); process.exit(1) }
@@ -227,12 +288,12 @@ async function main() {
     }
 
     default:
-      console.error('Usage: grim tome <recall|remember|relate|annotate|forget>')
+      console.error('Usage: grim tome <recall|remember|update|relate|annotate|forget>')
       process.exit(1)
   }
 }
 
-module.exports = { recall, remember, relate, annotate, forget }
+module.exports = { recall, remember, update, relate, annotate, forget }
 
 if (require.main === module) {
   main().catch(e => { console.error(e.message); process.exit(1) })

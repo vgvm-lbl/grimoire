@@ -1,6 +1,6 @@
-# Grimoire
+# Grimoire Ex Machina
 
-A personal knowledge graph that runs on local models, knows everything, costs nothing, and is slightly unhinged. (Internal nickname: FreeKB.)
+A personal knowledge graph that runs on local models, knows everything, costs nothing, and is slightly unhinged.
 
 ---
 
@@ -37,16 +37,19 @@ The engine and KB are separate repos. The engine points at the KB via `GRIMOIRE_
 ## Commands
 
 ```
-grim scribe       Rebuild the graph index           (The Scribe)    [local only]
-grim oracle       Search the knowledge graph        (The Oracle)    [local + remote]
-grim crawl        Extract entities from notes       (The Crawl)     [local only]
-grim divine       Validate graph health             (Divination)    [local + remote]
-grim pathfind     Link orphan entities              (Pathfinder)    [local only]
-grim rest         Run dream analysis                (Long Rest)     [local only]
-grim load         Load save — begin a session       (SAVESTATE)     [local + remote]
-grim save         Write save — end a session        (SAVESTATE)     [local + remote]
-grim tome         Memory ops: recall/remember/relate (The Tome)     [local + remote]
-grim serve        Start HTTP + MCP server                           [run on aid]
+grim scribe            Rebuild graph index + vector embeddings   (The Scribe)        [local]
+grim oracle            Search the KB — keyword + semantic hybrid  (The Oracle)        [local + remote]
+grim crawl             Extract entities from notes/docs           (The Crawl)         [local]
+grim divine            Validate graph health                      (Divination)        [local + remote]
+grim pathfind          Link orphan entities via Rebel + Ollama    (Pathfinder)        [local]
+grim rest              Long Rest deep analysis                    (Long Rest)         [local]
+grim archaeologist     Catalog old code projects into KB          (The Archaeologist) [local + remote]
+grim vision cast       Generate images via AUTOMATIC1111          (The Vision)        [local + remote]
+grim vision interrogate  CLIP-caption images → entity hints       (The Vision)        [local + remote]
+grim load              Load save — begin a session                (SAVESTATE)         [local + remote]
+grim save              Write save — end a session                 (SAVESTATE)         [local + remote]
+grim tome              Memory ops: recall/remember/relate         (The Tome)          [local + remote]
+grim serve             Start HTTP + MCP server                                        [run on aid]
 ```
 
 **Local** commands require `GRIMOIRE_ROOT` set and the KB directory accessible.
@@ -83,8 +86,11 @@ grim serve
 |----------|---------|-------------|
 | `GRIMOIRE_ROOT` | — | Path to grimoire-kb directory (local mode) |
 | `GRIMOIRE_HOST` | — | Grimoire server URL, e.g. `http://aid:3663` (remote mode) |
-| `OLLAMA_HOST` | `http://localhost:11434` | Ollama base URL |
+| `OLLAMA_HOST` | `http://aid:11434` | Ollama base URL |
 | `GRIMOIRE_PORT` | `3663` | Port for `grim serve` |
+| `GRIMOIRE_NER_HOST` | `http://aid:3773` | NER service (GLiNER + Rebel) |
+| `GRIMOIRE_A1111_HOST` | `http://aid:7860` | AUTOMATIC1111 Stable Diffusion |
+| `GRIMOIRE_EMBED_MODEL` | `nomic-embed-text` | Ollama embedding model |
 
 ---
 
@@ -118,7 +124,14 @@ Grimoire ships with five personas — specialized AI behavior modes:
 
 ---
 
-## Firewall
+## Service ports
+
+| Port | Service |
+|------|---------|
+| 3663 | Grimoire HTTP + MCP server |
+| 3773 | NER service (GLiNER + Rebel) |
+| 7860 | AUTOMATIC1111 |
+| 11434 | Ollama |
 
 Open port **3663** on aid for LAN clients. See [docs/client-setup.md](docs/client-setup.md).
 

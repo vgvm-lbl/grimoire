@@ -165,6 +165,43 @@ function search(graph, { query, tag, type, depth = 0, limit = 20, semanticHits =
     .slice(0, limit)
 }
 
+// ── Context enrichment ────────────────────────────────────────────────────────
+// Adds _context: { outgoing, incoming } to a result — names resolved, not just IDs.
+// Used by MCP oracle_search so skills get concept+parent+children in one call.
+
+function enrichWithContext(result, graph) {
+  const entity = result.entity
+  const id     = entity['@id']
+
+  // Outgoing: all typed relationships this entity declares
+  const outgoing = {}
+  for (const [relType, targets] of Object.entries(entity.relationships || {})) {
+    const ids = Array.isArray(targets) ? targets : [targets]
+    outgoing[relType] = ids
+      .map(tid => {
+        const e = graph.entities[tid]
+        return e ? { id: tid, name: e.name || tid, type: e['@type'] || '?' } : { id: tid }
+      })
+      .filter(Boolean)
+  }
+
+  // Incoming: entities that point TO this entity, with the rel type resolved
+  const incoming = []
+  for (const backId of (graph.backlinks[id] || [])) {
+    const backEntity = graph.entities[backId]
+    if (!backEntity) continue
+    for (const [relType, targets] of Object.entries(backEntity.relationships || {})) {
+      const ids = Array.isArray(targets) ? targets : [targets]
+      if (ids.includes(id)) {
+        incoming.push({ id: backId, name: backEntity.name || backId, type: backEntity['@type'] || '?', relType })
+      }
+    }
+  }
+
+  result._context = { outgoing, incoming }
+  return result
+}
+
 // ── Formatting ───────────────────────────────────────────────────────────────
 
 const TYPE_ICON = {
@@ -343,7 +380,7 @@ async function main() {
   }
 }
 
-module.exports = { search }
+module.exports = { search, enrichWithContext }
 
 if (require.main === module) {
   main().catch(e => { console.error(e.message); process.exit(1) })
