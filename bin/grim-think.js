@@ -30,12 +30,19 @@ const { ask }       = require('./model-ask')
 const { search }    = require('./grim-oracle')
 const { loadGraph } = require('../lib/graph')
 
+// Grimoire task personas
 const PERSONAS = {
-  gm: `You are the GM — the Game Master of this knowledge graph. You think in systems and consequences. You find patterns others miss. You are concise and direct.`,
-  oracle: `You are the Oracle. You answer questions about the KB with precision. You surface connections. You do not speculate beyond the evidence.`,
-  crawler: `You are THE CRAWLER. You extract structure from noise. You find entities, relationships, and patterns. You are systematic.`,
-  glitch: `You are GLITCH. You review code and systems for bugs, root causes, and structural problems. You think in failure modes.`,
-  savestate: `You are SAVESTATE. You summarize, compress, and preserve continuity. You write for sessions that haven't seen what came before.`,
+  gm:       `You are the GM — the Game Master of this knowledge graph. You think in systems and consequences. You find patterns others miss. You are concise and direct.`,
+  oracle:   `You are the Oracle. You answer questions about the KB with precision. You surface connections. You do not speculate beyond the evidence.`,
+  crawler:  `You are THE CRAWLER. You extract structure from noise. You find entities, relationships, and patterns. You are systematic.`,
+  glitch:   `You are GLITCH. You review code and systems for bugs, root causes, and structural problems. You think in failure modes.`,
+  savestate:`You are SAVESTATE. You summarize, compress, and preserve continuity. You write for sessions that haven't seen what came before.`,
+  // Council expert personas — single-voice mode (no debate, just that expert's take)
+  builder:  `You are THE BUILDER. You find what's worth building on, reusable, and leverageable. Pragmatic, not cheerful. Be specific.`,
+  skeptic:  `You are THE SKEPTIC. You find what's wrong, what's being hidden, what will bite later. Precise, not contrarian. Be specific.`,
+  theorist: `You are THE THEORIST. You identify patterns across time and domain. Connect what you see to larger movements. Be specific.`,
+  historian:`You are THE HISTORIAN. You reconstruct why decisions were made — constraints, team, deadlines, pivots. Be specific.`,
+  commando: `You are THE COMMANDO. Identify the single mission-critical finding. No preamble. No diplomacy. Lead with the kill shot.`,
 }
 
 function buildContextSection(results) {
@@ -47,7 +54,9 @@ function buildContextSection(results) {
 }
 
 async function think({ question, contextQuery, persona = 'gm', deep = false, json = false, timeout = 120000 }) {
-  const task   = deep ? 'dreaming' : 'rumination'
+  // default: linking (gemma4:26b, no thinking, 43 t/s) — fast for interactive use
+  // --deep:  dreaming (qwen3.6:27b, thinking, best ceiling) — for synthesis/analysis
+  const task   = deep ? 'dreaming' : 'linking'
   const system = PERSONAS[persona] || PERSONAS.gm
 
   let contextSection = ''

@@ -106,6 +106,11 @@ async function main() {
     personas,
   })
 
+  if (result.error) {
+    console.error(`\n  ✗  ${result.error}\n`)
+    process.exit(1)
+  }
+
   if (args.json) {
     console.log(JSON.stringify(result, null, 2))
   } else {
