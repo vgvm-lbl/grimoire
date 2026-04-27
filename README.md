@@ -94,11 +94,13 @@ All AI operations use local Ollama models — no cloud required.
 
 | Task | Model |
 |------|-------|
-| Entity extraction (The Crawl) | qwen2.5-coder:14b |
-| Orphan linking (Pathfinder) | qwen2.5-coder:7b |
-| Dream analysis (Long Rest) | qwen3.5:latest |
-| Stream rumination | qwen2.5-coder:7b |
-| Heavy analysis | glm-4.7-flash:latest |
+| Entity extraction / overview | gemma4:26b |
+| Per-file linking (bulk) | gemma4:26b |
+| Dream analysis / synthesis | gemma4:31b |
+| Rumination / noise floor | qwen3.5:9b |
+| Interactive reflection | gemma4:26b |
+
+Models are resolved dynamically via `grim models` — routing uses installed models scored against capability profiles. Run `grim models` to see the current routing table for your hardware.
 
 ---
 
