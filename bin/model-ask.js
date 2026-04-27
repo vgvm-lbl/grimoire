@@ -51,47 +51,82 @@ const OLLAMA_BASE = process.env.OLLAMA_HOST || 'http://aid:11434'
 // size_gb: approximate VRAM footprint — used to deprioritize models that won't fit.
 
 const CAPABILITY_PROFILES = [
+  // ── Benchmarked on chonko-p40 via Comparitron (2026-04-26) ──────────────────
+  // gemma4:31b — batch/overnight tier (5 t/s). Best ceiling across all categories.
+  {
+    match:    /^gemma4:31b/,
+    thinking: false,
+    size_gb:  20,
+    scores:   { dreaming: 10, synthesis: 10, reflection: 8, extraction: 8, linking: 6, rumination: 4, default: 7 },
+  },
+  // gemma4:26b — interactive workhorse (43 t/s). 85.2 overall, archaeology 87.7. Best value overall.
+  {
+    match:    /^gemma4/,
+    thinking: false,
+    size_gb:  16,
+    scores:   { extraction: 10, linking: 9, reflection: 9, synthesis: 8, dreaming: 7, rumination: 7, default: 9 },
+  },
+  // qwen3.6:27b — best ceiling for reasoning + synthesis (12 t/s). Negative self-bias = well-calibrated.
+  {
+    match:    /^qwen3\.6/,
+    thinking: true,
+    size_gb:  18,
+    scores:   { synthesis: 10, dreaming: 9, reflection: 8, extraction: 7, linking: 5, rumination: 4, default: 7 },
+  },
+  // qwen3.5:27b — 82.7 overall (12 t/s). Tops coding/reasoning; weak on structured (61.2) — skip extraction.
+  {
+    match:    /^qwen3\.5:27b/,
+    thinking: true,
+    size_gb:  18,
+    scores:   { synthesis: 9, dreaming: 8, reflection: 8, rumination: 5, default: 7 },
+  },
+  // qwen3.5:9b — 78.6 overall (34 t/s). Archaeology 90.0. Fast and cheap for bulk/noise floor.
+  {
+    match:    /^qwen3\.5:9b/,
+    thinking: true,
+    size_gb:  6,
+    scores:   { rumination: 8, linking: 7, reflection: 6, extraction: 5, default: 5 },
+  },
+  // qwen3 catch-all
   {
     match:    /^qwen3/,
     thinking: true,
-    size_gb:  7,
-    scores:   { dreaming: 10, synthesis: 9, reflection: 8, extraction: 7, linking: 5, rumination: 4, default: 7 },
+    size_gb:  18,
+    scores:   { dreaming: 8, synthesis: 8, reflection: 7, extraction: 6, linking: 5, rumination: 5, default: 6 },
   },
-  {
-    match:    /^phi4/,
-    thinking: false,
-    size_gb:  9,
-    scores:   { reflection: 9, synthesis: 8, extraction: 7, dreaming: 7, linking: 5, rumination: 4, default: 7 },
-  },
+  // Models below qwen3.5:9b (78.6 overall) are intentionally excluded from routing.
+  // devstral-small-2 (76.3, self-bias +9.8), deepseek-r1 (71-72), deepseek-coder-v2 (63.0),
+  // phi4-reasoning:plus (54.2, self-bias +35.3) — all benchmarked below quality threshold on chonko-p40.
+  // ── Legacy profiles ──────────────────────────────────────────────────────────
   {
     match:    /^qwen2\.5-coder:14b/,
     thinking: false,
     size_gb:  9,
-    scores:   { extraction: 9, linking: 7, synthesis: 6, rumination: 5, reflection: 4, default: 8 },
+    scores:   { extraction: 8, linking: 7, synthesis: 6, rumination: 5, reflection: 4, default: 7 },
   },
   {
     match:    /^qwen2\.5-coder:7b/,
     thinking: false,
     size_gb:  5,
-    scores:   { linking: 8, extraction: 6, rumination: 6, default: 5 },
+    scores:   { linking: 7, extraction: 5, rumination: 6, default: 5 },
   },
   {
     match:    /^qwen2\.5:14b/,
     thinking: false,
     size_gb:  9,
-    scores:   { reflection: 8, synthesis: 7, extraction: 8, linking: 6, rumination: 5, default: 7 },
+    scores:   { reflection: 7, synthesis: 6, extraction: 7, linking: 6, rumination: 5, default: 6 },
   },
   {
     match:    /^qwen2\.5:7b/,
     thinking: false,
     size_gb:  5,
-    scores:   { linking: 7, extraction: 5, reflection: 5, rumination: 5, default: 5 },
+    scores:   { linking: 6, extraction: 5, reflection: 5, rumination: 5, default: 5 },
   },
   {
     match:    /^qwen2\.5/,
     thinking: false,
     size_gb:  5,
-    scores:   { linking: 6, extraction: 5, default: 5 },
+    scores:   { linking: 5, extraction: 4, default: 4 },
   },
   {
     match:    /^llama3/,
@@ -102,7 +137,7 @@ const CAPABILITY_PROFILES = [
   {
     match:    /^glm/,
     thinking: false,
-    size_gb:  19, // CPU offload on 16GB VRAM — penalized
+    size_gb:  19,
     scores:   { extraction: 2, reflection: 2, synthesis: 2, default: 2 },
   },
   {
@@ -130,15 +165,15 @@ const EMBEDDING_MODEL = 'nomic-embed-text'
 
 // Fallback when Ollama is unreachable
 const STATIC_FALLBACK = {
-  extraction:  { model: 'qwen2.5-coder:14b', thinking: false },
-  linking:     { model: 'qwen2.5-coder:7b',  thinking: false },
-  dreaming:    { model: 'qwen3.5:latest',    thinking: true  },
-  synthesis:   { model: 'qwen3.5:latest',    thinking: true  },
-  reflection:  { model: 'phi4:latest',       thinking: false },
-  rumination:  { model: 'qwen2.5-coder:7b',  thinking: false },
+  extraction:  { model: 'gemma4:26b',        thinking: false },
+  linking:     { model: 'gemma4:26b',        thinking: false },
+  dreaming:    { model: 'qwen3.6:27b',       thinking: true  },
+  synthesis:   { model: 'qwen3.6:27b',       thinking: true  },
+  reflection:  { model: 'gemma4:26b',        thinking: false },
+  rumination:  { model: 'qwen3.5:9b',        thinking: true  },
   vision:      { model: 'llava:latest',      thinking: false },
   embedding:   { model: EMBEDDING_MODEL,     thinking: false },
-  default:     { model: 'qwen2.5-coder:14b', thinking: false },
+  default:     { model: 'gemma4:26b',        thinking: false },
 }
 
 // ── Model list cache ──────────────────────────────────────────────────────────
