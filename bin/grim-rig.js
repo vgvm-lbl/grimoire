@@ -11,9 +11,10 @@
  * until you can see what it's switching.
  *
  * CLI:
- *   grim rig              Show all boxes (default: status)
- *   grim rig status       Same as above
- *   grim rig status --json  Machine-readable output
+ *   grim rig                             Show all boxes (default: status)
+ *   grim rig status [--json]             Machine-readable output
+ *   grim rig up <service> [--box <name>] systemctl start
+ *   grim rig down <service> [--box]      systemctl stop
  *
  * ── Config ────────────────────────────────────────────────────────────────────
  * Box inventory lives in $GRIMOIRE_ROOT/rig.json — NOT in this file.
@@ -28,9 +29,8 @@
  * BatchMode=yes means key-based auth only — no interactive prompts.
  * Local detection: if hostname matches box.aliases, runs bash directly.
  *
- * Future subcommands (Phase 2):
- *   grim rig up <service> [--box <name>]    systemctl start <service>
- *   grim rig down <service> [--box <name>]  systemctl stop <service>
+ * Each service in rig.json may include a "unit" field to override the systemctl
+ * unit name (defaults to service name). Requires passwordless sudo or root SSH.
  */
 
 const { exec }   = require('node:child_process')
@@ -75,7 +75,9 @@ function runScript(box, script, timeout = 12000) {
   const isLocal = (box.aliases || []).includes(LOCAL_HOSTNAME)
   return new Promise(resolve => {
     const cmd  = isLocal ? 'bash' : `ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new ${box.host} bash`
-    const proc = exec(cmd, { timeout }, (err, stdout) => resolve({ ok: !err, out: stdout.trim() }))
+    const proc = exec(cmd, { timeout }, (err, stdout, stderr) => {
+      resolve({ ok: !err, out: (stdout + stderr).trim() })
+    })
     proc.stdin.end(script)
   })
 }
@@ -133,6 +135,61 @@ async function checkBox(box) {
   }
 
   return parseBoxOutput(box, out)
+}
+
+// ── Service control (Phase 2) ─────────────────────────────────────────────────
+//
+// Finds which box(es) run the named service and issues systemctl start/stop.
+// If a service exists on multiple boxes, --box is required.
+// Each service may optionally declare a `unit` field in rig.json; defaults to name.
+
+// Pure helper — returns matches or throws { code, message } for CLI to handle.
+function findBoxesForService(boxes, serviceName, boxFilter) {
+  const matches = boxes.filter(b => {
+    if (b.skip) return false
+    if (boxFilter && b.host !== boxFilter && b.label !== boxFilter) return false
+    return (b.services || []).some(s => s.name === serviceName)
+  })
+
+  if (matches.length === 0) {
+    const where = boxFilter ? ` on box '${boxFilter}'` : ''
+    throw { code: 'NOT_FOUND', message: `service '${serviceName}' not found${where}` }
+  }
+
+  if (matches.length > 1 && !boxFilter) {
+    const names = matches.map(b => b.label).join(', ')
+    throw { code: 'AMBIGUOUS', message: `'${serviceName}' found on multiple boxes: ${names} — use --box` }
+  }
+
+  return matches
+}
+
+async function controlService(action, serviceName, { box: boxFilter } = {}) {
+  const boxes = loadBoxes()
+
+  let matches
+  try {
+    matches = findBoxesForService(boxes, serviceName, boxFilter)
+  } catch (e) {
+    console.error(`grim rig: ${e.message}`)
+    if (e.code === 'NOT_FOUND') console.error(`Run 'grim rig status' to see available services.`)
+    process.exit(1)
+  }
+
+  const results = await Promise.all(matches.map(async box => {
+    const svc  = box.services.find(s => s.name === serviceName)
+    const unit = svc.unit || serviceName
+    const { ok, out } = await runScript(box, `systemctl ${action} ${unit}`)
+    return { box: box.label, ok, out }
+  }))
+
+  for (const r of results) {
+    const mark = r.ok ? '✓' : '✗'
+    const tail = r.out ? `\n     ${r.out.split('\n').join('\n     ')}` : ''
+    console.log(`  ${mark}  ${r.box}  ${action} ${serviceName}${tail}`)
+  }
+
+  if (results.some(r => !r.ok)) process.exit(1)
 }
 
 // ── Display ───────────────────────────────────────────────────────────────────
@@ -201,14 +258,15 @@ async function status({ json = false } = {}) {
   display(results, elapsed)
 }
 
-module.exports = { status, parseVRAM, parseBoxOutput, fmtGPU, fmtServices }
+module.exports = { status, controlService, findBoxesForService, parseVRAM, parseBoxOutput, fmtGPU, fmtServices }
 
 // ── CLI ───────────────────────────────────────────────────────────────────────
 
 async function main() {
   const args = minimist(process.argv.slice(3), {
     boolean: ['json', 'help'],
-    alias:   { j: 'json', h: 'help' },
+    string:  ['box'],
+    alias:   { j: 'json', h: 'help', b: 'box' },
   })
 
   const sub = args._[0] || 'status'
@@ -216,21 +274,38 @@ async function main() {
   if (args.help || sub === 'help') {
     console.log(`
   Usage: grim rig [status] [--json]
+         grim rig up <service> [--box <name>]
+         grim rig down <service> [--box <name>]
 
   Subcommands:
     status (default)   Show VRAM + service status for all boxes
+    up <service>       systemctl start <service>
+    down <service>     systemctl stop <service>
 
   Options:
-    --json   Machine-readable output
+    --box <name>   Target a specific box (required when service is on multiple boxes)
+    --json         Machine-readable status output
 
   Config:
     $GRIMOIRE_ROOT/rig.json — box inventory (copy from rig.example.json)
+    Each service may include a "unit" field to override the systemctl unit name.
 `)
     return
   }
 
   if (sub === 'status') {
     await status({ json: args.json })
+    return
+  }
+
+  if (sub === 'up' || sub === 'down') {
+    const action      = sub === 'up' ? 'start' : 'stop'
+    const serviceName = args._[1]
+    if (!serviceName) {
+      console.error(`Usage: grim rig ${sub} <service> [--box <name>]`)
+      process.exit(1)
+    }
+    await controlService(action, serviceName, { box: args.box || null })
     return
   }
 

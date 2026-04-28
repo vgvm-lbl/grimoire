@@ -1,7 +1,7 @@
 'use strict'
 const { test } = require('node:test')
 const assert   = require('node:assert/strict')
-const { parseVRAM, parseBoxOutput, fmtGPU, fmtServices } = require('../bin/grim-rig')
+const { parseVRAM, parseBoxOutput, fmtGPU, fmtServices, findBoxesForService } = require('../bin/grim-rig')
 
 // ── parseVRAM ─────────────────────────────────────────────────────────────────
 
@@ -117,4 +117,53 @@ test('fmtServices: separates multiple services', () => {
   ])
   assert.match(s, /a1111/)
   assert.match(s, /whisper/)
+})
+
+// ── findBoxesForService ───────────────────────────────────────────────────────
+
+const rigBoxes = [
+  { host: 'box-a', label: 'box-a', aliases: ['box-a'], services: [{ name: 'ollama' }, { name: 'comfyui' }] },
+  { host: 'box-b', label: 'box-b', aliases: ['box-b'], services: [{ name: 'a1111' }] },
+  { host: 'box-c', label: 'box-c', aliases: ['box-c'], services: [{ name: 'ollama' }] },
+  { host: 'client', label: 'client', aliases: ['client'], services: [], skip: true },
+]
+
+test('findBoxesForService: returns single matching box', () => {
+  const matches = findBoxesForService(rigBoxes, 'a1111', null)
+  assert.equal(matches.length, 1)
+  assert.equal(matches[0].host, 'box-b')
+})
+
+test('findBoxesForService: throws NOT_FOUND when service missing', () => {
+  assert.throws(
+    () => findBoxesForService(rigBoxes, 'no-such-svc', null),
+    e => e.code === 'NOT_FOUND'
+  )
+})
+
+test('findBoxesForService: throws AMBIGUOUS when service on multiple boxes', () => {
+  assert.throws(
+    () => findBoxesForService(rigBoxes, 'ollama', null),
+    e => e.code === 'AMBIGUOUS'
+  )
+})
+
+test('findBoxesForService: --box filter resolves ambiguity', () => {
+  const matches = findBoxesForService(rigBoxes, 'ollama', 'box-c')
+  assert.equal(matches.length, 1)
+  assert.equal(matches[0].host, 'box-c')
+})
+
+test('findBoxesForService: --box filter throws NOT_FOUND for wrong box', () => {
+  assert.throws(
+    () => findBoxesForService(rigBoxes, 'ollama', 'box-b'),
+    e => e.code === 'NOT_FOUND'
+  )
+})
+
+test('findBoxesForService: skip=true boxes are excluded', () => {
+  assert.throws(
+    () => findBoxesForService(rigBoxes, 'anything', 'client'),
+    e => e.code === 'NOT_FOUND'
+  )
 })
