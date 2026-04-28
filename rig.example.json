@@ -5,7 +5,9 @@
     "aliases": ["gpu-box-1"],
     "services": [
       { "name": "ollama",  "check": "curl -sf --max-time 3 http://localhost:11434/ >/dev/null 2>&1 && echo OK || echo FAIL" },
-      { "name": "comfyui", "check": "curl -sf --max-time 4 http://localhost:8188/system_stats >/dev/null 2>&1 && echo OK || echo FAIL" }
+      { "name": "comfyui", "check": "curl -sf --max-time 4 http://localhost:8188/system_stats >/dev/null 2>&1 && echo OK || echo FAIL" },
+      { "name": "script-svc", "check": "pgrep -f script-svc >/dev/null 2>&1 && echo OK || echo FAIL",
+        "start": "/path/to/start.sh", "stop": "pkill -f script-svc" }
     ]
   },
   {
