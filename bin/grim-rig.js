@@ -177,10 +177,12 @@ async function controlService(action, serviceName, { box: boxFilter } = {}) {
   }
 
   const results = await Promise.all(matches.map(async box => {
-    const svc    = box.services.find(s => s.name === serviceName)
+    const svc = box.services.find(s => s.name === serviceName)
+    const ctl = svc.scope === 'user' ? 'systemctl --user' : 'systemctl'
+    const unit = svc.unit || serviceName
     const script = action === 'start'
-      ? (svc.start || `systemctl start ${svc.unit || serviceName}`)
-      : (svc.stop  || `systemctl stop ${svc.unit || serviceName}`)
+      ? (svc.start || `${ctl} start ${unit}`)
+      : (svc.stop  || `${ctl} stop ${unit}`)
     const { ok, out } = await runScript(box, script)
     return { box: box.label, ok, out }
   }))
@@ -290,10 +292,11 @@ async function main() {
 
   Config:
     $GRIMOIRE_ROOT/rig.json — box inventory (copy from rig.example.json)
-    Service control fields (pick one):
-      "unit": "name"         systemctl start/stop <unit>  (default: service name)
-      "start": "cmd"         run this command to start
-      "stop":  "cmd"         run this command to stop
+    Service control fields:
+      "unit": "name"         systemctl unit name (default: service name)
+      "scope": "user"        use systemctl --user instead of system
+      "start": "cmd"         override: run this command to start
+      "stop":  "cmd"         override: run this command to stop
 `)
     return
   }
