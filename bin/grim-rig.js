@@ -15,9 +15,18 @@
  *   grim rig status       Same as above
  *   grim rig status --json  Machine-readable output
  *
- * Box/service config is at the top of this file — edit it to match your
- * homelab. Service checks use HTTP probes or pgrep. SSH must be configured
- * (BatchMode=yes means key-based auth only — no interactive prompts).
+ * ── Config ────────────────────────────────────────────────────────────────────
+ * Box inventory lives in $GRIMOIRE_ROOT/rig.json — NOT in this file.
+ * Copy rig.example.json from the engine root and edit it locally.
+ * That file is never committed to the engine repo.
+ *
+ * ── Service checks ────────────────────────────────────────────────────────────
+ * HTTP probe: `curl -sf --max-time N <url>` — up if curl exits 0
+ * pgrep:      `pgrep -f <pattern>` — up if any matching process exists
+ *
+ * ── SSH ───────────────────────────────────────────────────────────────────────
+ * BatchMode=yes means key-based auth only — no interactive prompts.
+ * Local detection: if hostname matches box.aliases, runs bash directly.
  *
  * Future subcommands (Phase 2):
  *   grim rig up <service> [--box <name>]    systemctl start <service>
@@ -25,49 +34,34 @@
  */
 
 const { exec }   = require('node:child_process')
+const fs         = require('node:fs')
 const os         = require('node:os')
+const path       = require('node:path')
 const minimist   = require('minimist')
+const { config } = require('../lib/env')
 
 const LOCAL_HOSTNAME = os.hostname().toLowerCase()
 
-// ── Box inventory ──────────────────────────────────────────────────────────────
-//
-// Each box runs zero or more AI services. Services are checked via HTTP probe
-// or pgrep. Order within a box sets display order.
-//
-// HTTP probe: `curl -sf --max-time N <url>` — up if curl exits 0
-// pgrep:      `pgrep -f <pattern>` — up if any matching process exists
+// ── Load box config ───────────────────────────────────────────────────────────
 
-const BOXES = [
-  {
-    host: 'aid',
-    label: 'aid',
-    // hostnames this box might report — used to detect when we're running locally on it
-    aliases: ['aid', 'p40'],
-    services: [
-      { name: 'a1111',   check: 'curl -sf --max-time 4 http://localhost:7860/ >/dev/null 2>&1 && echo OK || echo FAIL' },
-      { name: 'comfyui', check: 'curl -sf --max-time 4 http://localhost:8188/system_stats >/dev/null 2>&1 && echo OK || echo FAIL' },
-      { name: 'whisper', check: 'curl -sf --max-time 3 http://localhost:9000/ >/dev/null 2>&1 && echo OK || echo FAIL' },
-      { name: 'trellis', check: 'curl -sf --max-time 4 http://localhost:7777/ >/dev/null 2>&1 && echo OK || echo FAIL' },
-      { name: 'piper',   check: 'pgrep -f piper >/dev/null 2>&1 && echo OK || echo FAIL' },
-    ],
-  },
-  {
-    host: 'chonko',
-    label: 'chonko',
-    aliases: ['chonko'],
-    services: [
-      { name: 'ollama',   check: 'curl -sf --max-time 3 http://localhost:11434/ >/dev/null 2>&1 && echo OK || echo FAIL' },
-    ],
-  },
-  {
-    host: 'meinherz',
-    label: 'meinherz',
-    aliases: ['meinherz'],
-    note: 'workstation',
-    services: [],
-  },
-]
+function loadBoxes() {
+  const configPath = config.root ? path.join(config.root, 'rig.json') : null
+
+  if (!configPath || !fs.existsSync(configPath)) {
+    const examplePath = path.join(__dirname, '..', 'rig.example.json')
+    console.error('grim rig: no box config found.')
+    console.error(`  Expected: ${configPath || '$GRIMOIRE_ROOT/rig.json'}`)
+    console.error(`  Copy ${examplePath} → ${configPath || '$GRIMOIRE_ROOT/rig.json'} and edit it.`)
+    process.exit(1)
+  }
+
+  try {
+    return JSON.parse(fs.readFileSync(configPath, 'utf8'))
+  } catch (e) {
+    console.error(`grim rig: failed to parse rig.json — ${e.message}`)
+    process.exit(1)
+  }
+}
 
 // ── Script execution — local or SSH ──────────────────────────────────────────
 //
@@ -131,11 +125,10 @@ function parseBoxOutput(box, out) {
 // ── Check one box (parallel-safe) ─────────────────────────────────────────────
 
 async function checkBox(box) {
-  const script    = buildScript(box)
+  const script      = buildScript(box)
   const { ok, out } = await runScript(box, script)
 
   if (!ok && !out) {
-    // SSH failed entirely — box unreachable or auth missing
     return { host: box.host, label: box.label, note: box.note, reachable: false, gpu: null, services: [] }
   }
 
@@ -194,11 +187,10 @@ function display(results, elapsed) {
 // ── Status command ────────────────────────────────────────────────────────────
 
 async function status({ json = false } = {}) {
-  const t0 = Date.now()
+  const t0    = Date.now()
+  const boxes = loadBoxes()
 
-  // Check all boxes in parallel
-  const results = await Promise.all(BOXES.map(checkBox))
-
+  const results = await Promise.all(boxes.filter(b => !b.skip).map(checkBox))
   const elapsed = Date.now() - t0
 
   if (json) {
@@ -209,7 +201,7 @@ async function status({ json = false } = {}) {
   display(results, elapsed)
 }
 
-module.exports = { status, BOXES, parseVRAM, parseBoxOutput, fmtGPU, fmtServices }
+module.exports = { status, parseVRAM, parseBoxOutput, fmtGPU, fmtServices }
 
 // ── CLI ───────────────────────────────────────────────────────────────────────
 
@@ -230,6 +222,9 @@ async function main() {
 
   Options:
     --json   Machine-readable output
+
+  Config:
+    $GRIMOIRE_ROOT/rig.json — box inventory (copy from rig.example.json)
 `)
     return
   }

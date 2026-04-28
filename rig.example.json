@@ -1,0 +1,28 @@
+[
+  {
+    "host": "gpu-box-1",
+    "label": "gpu-box-1",
+    "aliases": ["gpu-box-1"],
+    "services": [
+      { "name": "ollama",  "check": "curl -sf --max-time 3 http://localhost:11434/ >/dev/null 2>&1 && echo OK || echo FAIL" },
+      { "name": "comfyui", "check": "curl -sf --max-time 4 http://localhost:8188/system_stats >/dev/null 2>&1 && echo OK || echo FAIL" }
+    ]
+  },
+  {
+    "host": "gpu-box-2",
+    "label": "gpu-box-2",
+    "aliases": ["gpu-box-2"],
+    "services": [
+      { "name": "a1111",   "check": "curl -sf --max-time 4 http://localhost:7860/ >/dev/null 2>&1 && echo OK || echo FAIL" },
+      { "name": "whisper", "check": "curl -sf --max-time 3 http://localhost:9000/ >/dev/null 2>&1 && echo OK || echo FAIL" }
+    ]
+  },
+  {
+    "host": "workstation",
+    "label": "workstation",
+    "aliases": ["workstation"],
+    "note": "client only — not polled remotely",
+    "services": [],
+    "skip": true
+  }
+]

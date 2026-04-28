@@ -1,7 +1,7 @@
 'use strict'
 const { test } = require('node:test')
 const assert   = require('node:assert/strict')
-const { parseVRAM, parseBoxOutput, fmtGPU, fmtServices, BOXES } = require('../bin/grim-rig')
+const { parseVRAM, parseBoxOutput, fmtGPU, fmtServices } = require('../bin/grim-rig')
 
 // ── parseVRAM ─────────────────────────────────────────────────────────────────
 
@@ -36,7 +36,7 @@ test('parseVRAM: returns null for malformed input', () => {
 
 // ── parseBoxOutput ────────────────────────────────────────────────────────────
 
-const testBox = BOXES.find(b => b.host === 'chonko') || BOXES[1]
+const testBox = { host: 'gpu-box', label: 'gpu-box', services: [{ name: 'ollama' }] }
 
 test('parseBoxOutput: parses gpu + service lines', () => {
   const out = 'Tesla P40, 19600, 4976, 24576\nollama:OK'
@@ -55,7 +55,7 @@ test('parseBoxOutput: marks service down on FAIL', () => {
 })
 
 test('parseBoxOutput: handles multiple services', () => {
-  const box = BOXES.find(b => b.host === 'aid') || BOXES[0]
+  const box = { host: 'gpu-box', label: 'gpu-box', services: [] }
   const out = 'GeForce RTX 4060 Ti, 2345, 14039, 16384\na1111:OK\ncomfyui:FAIL\nwhisper:OK'
   const result = parseBoxOutput(box, out)
   assert.equal(result.services.length, 3)
