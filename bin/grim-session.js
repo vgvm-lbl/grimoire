@@ -48,6 +48,17 @@ function mostRecent(entities, n = 3) {
     .slice(0, n)
 }
 
+// ── Affect model constants ────────────────────────────────────────────────────
+//
+// PAD (Valence / Arousal / Dominance) affect model.
+// Scores live in [-1, 1] but in practice stay in [0, 1] for this use case.
+//
+// Baseline is the resting state between sessions — slightly positive and confident.
+// Decay rate: λ = 0.3/day → 74% of deviation retained after 1 day, 12% after 7.
+
+const AFFECT_BASELINE   = { valence: 0.5, arousal: 0.5, dominance: 0.6 }
+const AFFECT_DECAY_RATE = 0.3  // per day
+
 // ── Cognitive state helpers ───────────────────────────────────────────────────
 
 function loadCognitiveState(graph) {
@@ -68,6 +79,41 @@ function saveCognitiveState(updates, graph) {
   state.metadata.dateModified = new Date().toISOString().slice(0, 10)
   saveEntity('meta_cognitive_state', state, graph)
   return state
+}
+
+function labelAffect(valence, arousal) {
+  return valence > 0.6 && arousal > 0.5  ? 'engaged and building'
+       : valence > 0.6 && arousal <= 0.5 ? 'satisfied and settled'
+       : valence > 0.3 && arousal > 0.5  ? 'focused'
+       : valence > 0.3                   ? 'neutral'
+       : arousal > 0.5                   ? 'frustrated but pushing'
+       :                                   'drained'
+}
+
+/**
+ * Apply exponential decay toward baseline for time elapsed since last session.
+ * Returns a new affect object with decayed values and a daysElapsed field.
+ * Returns the original object unchanged if decay is negligible (< ~2.5 hours).
+ */
+function decayAffect(affect, now = new Date()) {
+  if (!affect?.lastUpdated) return affect
+
+  const days = Math.max(0, (now - new Date(affect.lastUpdated)) / 86400000)
+  if (days < 0.1) return affect  // trivial gap — skip
+
+  const factor = Math.exp(-AFFECT_DECAY_RATE * days)
+  const v = +(AFFECT_BASELINE.valence   + (affect.valence   - AFFECT_BASELINE.valence)   * factor).toFixed(2)
+  const a = +(AFFECT_BASELINE.arousal   + (affect.arousal   - AFFECT_BASELINE.arousal)   * factor).toFixed(2)
+  const d = +(AFFECT_BASELINE.dominance + (affect.dominance - AFFECT_BASELINE.dominance) * factor).toFixed(2)
+
+  return {
+    ...affect,
+    valence:     v,
+    arousal:     a,
+    dominance:   d,
+    label:       labelAffect(v, a),
+    daysElapsed: +days.toFixed(1),
+  }
 }
 
 // Heuristic affect assessment from session events (no API call required)
@@ -99,14 +145,12 @@ function assessAffect(sessionEntity) {
   arousal   = Math.max(-1, Math.min(1, arousal))
   dominance = Math.max(-1, Math.min(1, dominance))
 
-  const label = valence > 0.6 && arousal > 0.5  ? 'engaged and building'
-              : valence > 0.6 && arousal <= 0.5  ? 'satisfied and settled'
-              : valence > 0.3 && arousal > 0.5   ? 'focused'
-              : valence > 0.3                     ? 'neutral'
-              : arousal > 0.5                     ? 'frustrated but pushing'
-              :                                     'drained'
-
-  return { valence: +valence.toFixed(2), arousal: +arousal.toFixed(2), dominance: +dominance.toFixed(2), label }
+  return {
+    valence:   +valence.toFixed(2),
+    arousal:   +arousal.toFixed(2),
+    dominance: +dominance.toFixed(2),
+    label:     labelAffect(valence, arousal),
+  }
 }
 
 // ── Briefing (grim load) ──────────────────────────────────────────────────────
@@ -120,9 +164,17 @@ async function loadBriefing() {
   requireMode('local')
   const graph = await loadGraph()
 
-  const agentModel    = loadEntityById('meta_agent_grimoire',   graph)
-  const userModel     = loadEntityById('meta_user_model',       graph)
-  const cognitiveState = loadCognitiveState(graph)
+  const agentModel     = loadEntityById('meta_agent_grimoire', graph)
+  const userModel      = loadEntityById('meta_user_model',     graph)
+  let cognitiveState   = loadCognitiveState(graph)
+
+  // Apply affect decay since last session and persist the updated value
+  if (cognitiveState?.affect?.lastUpdated) {
+    const decayed = decayAffect(cognitiveState.affect)
+    if (decayed !== cognitiveState.affect) {
+      cognitiveState = saveCognitiveState({ affect: decayed }, graph)
+    }
+  }
 
   // Find interrupted sessions (started but not ended)
   const sessions     = allEntitiesOfType('Session', graph)
@@ -236,7 +288,7 @@ async function saveSession({ topic, summary, learned = [], nextSteps = [], decis
     if (state) {
       state.affect = {
         ...affect,
-        lastUpdated:    now.slice(0, 10),
+        lastUpdated:    now,   // full ISO datetime for accurate decay calculation
         sessionSummary: summary,
       }
       state.workingMemory = {
@@ -360,7 +412,8 @@ function formatBriefing(b) {
   if (b.agentModel) {
     const id  = b.agentModel.identity || {}
     const aff = b.cognitiveState?.affect
-    const affStr = aff ? `  ${aff.label}  (v:${aff.valence} a:${aff.arousal ?? '?'} d:${aff.dominance ?? '?'})` : ''
+    const decayNote = aff?.daysElapsed > 0 ? `  [${aff.daysElapsed}d decay]` : ''
+    const affStr = aff ? `  ${aff.label}  (v:${aff.valence} a:${aff.arousal ?? '?'} d:${aff.dominance ?? '?'})${decayNote}` : ''
     console.log(`  Identity : ${b.agentModel.name || 'Grimoire'}${affStr}`)
     if (id.role)    console.log(`  Role     : ${id.role}`)
     if (id.chapter) console.log(`  Chapter  : ${id.chapter}`)
@@ -483,7 +536,7 @@ async function main() {
   }
 }
 
-module.exports = { loadBriefing, startSession, saveSession, heartbeat, addNote, upsertGoal }
+module.exports = { loadBriefing, startSession, saveSession, heartbeat, addNote, upsertGoal, decayAffect, labelAffect, AFFECT_BASELINE, AFFECT_DECAY_RATE }
 
 if (require.main === module) {
   main().catch(e => { console.error(e.message); process.exit(1) })

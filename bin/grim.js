@@ -28,6 +28,8 @@ const COMMANDS = {
   'models':        { script: 'grim-models.js',        desc: 'Show resolved model routing table       (The Router)'       },
   'council':       { script: 'grim-council.js',       desc: 'Five experts argue about a topic        (The Council)'       },
   'jot':           { script: 'grim-jot.js',           desc: 'Zero-friction thought capture            (The Jot)'           },
+  'ingest':        { script: 'grim-ingest.js',        desc: 'Digest transcripts/notes into KB         (The Archivist)'     },
+  'rig':           { script: 'grim-rig.js',           desc: 'Homelab AI service monitor                (The Rig)'            },
   'serve':     { script: 'grim-server.js',   desc: 'Start the Grimoire HTTP+MCP server'                },
 }
 

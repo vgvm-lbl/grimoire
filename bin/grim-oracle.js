@@ -26,6 +26,7 @@ const { loadGraph }         = require('../lib/graph')
 const { requireMode, config, isLocal } = require('../lib/env')
 const { TAGS, suggestTags } = require('../lib/tags')
 const { semanticSearch, indexReady } = require('../lib/vectors')
+const { relTargetId, resolveTarget, fmtBounds, filterActive, isActive } = require('../lib/temporal')
 
 // ── Search ───────────────────────────────────────────────────────────────────
 
@@ -39,9 +40,11 @@ const { semanticSearch, indexReady } = require('../lib/vectors')
  * @param {number}  [opts.depth]         - relationship traversal depth (default 0)
  * @param {number}  [opts.limit]         - max results (default 20)
  * @param {Array}   [opts.semanticHits]  - pre-computed vector hits to merge in
+ * @param {boolean} [opts.active]        - if true, filter traversal to active edges only
+ * @param {string}  [opts.asOf]          - ISO date for active filter (default: today)
  * @returns {Array<{entity, score, hops}>}
  */
-function search(graph, { query, tag, type, depth = 0, limit = 20, semanticHits = [] } = {}) {
+function search(graph, { query, tag, type, depth = 0, limit = 20, semanticHits = [], active = false, asOf } = {}) {
   const results = new Map() // id → { entity, score, hops }
 
   // ── Seed results ───────────────────────────────────────────────────────────
@@ -136,9 +139,12 @@ function search(graph, { query, tag, type, depth = 0, limit = 20, semanticHits =
         const entity = graph.entities[id]
         if (!entity) continue
 
-        // Outgoing edges
+        // Outgoing edges — targets may be strings or rich { id, validFrom, ... } objects
         for (const targets of Object.values(entity.relationships || {})) {
-          for (const tid of (Array.isArray(targets) ? targets : [targets])) {
+          const rawList = Array.isArray(targets) ? targets : [targets]
+          const eligible = active ? filterActive(rawList, asOf) : rawList
+          for (const raw of eligible) {
+            const tid = relTargetId(raw)
             if (tid && !results.has(tid) && graph.entities[tid]) {
               results.set(tid, { entity: graph.entities[tid], score: Math.max(1, 50 - hop * 15), hops: hop })
               next.add(tid)
@@ -149,6 +155,15 @@ function search(graph, { query, tag, type, depth = 0, limit = 20, semanticHits =
         // Backlinks (incoming edges)
         for (const bid of (graph.backlinks[id] || [])) {
           if (!results.has(bid) && graph.entities[bid]) {
+            if (active) {
+              // Only follow if the back-entity has an active edge pointing to us
+              const backEntity = graph.entities[bid]
+              const hasActiveEdge = Object.values(backEntity.relationships || {}).some(targets => {
+                const rawList = Array.isArray(targets) ? targets : [targets]
+                return filterActive(rawList, asOf).some(t => relTargetId(t) === id)
+              })
+              if (!hasActiveEdge) continue
+            }
             results.set(bid, { entity: graph.entities[bid], score: Math.max(1, 40 - hop * 15), hops: hop })
             next.add(bid)
           }
@@ -174,13 +189,20 @@ function enrichWithContext(result, graph) {
   const id     = entity['@id']
 
   // Outgoing: all typed relationships this entity declares
+  // Preserves temporal bounds (validFrom/validUntil) when present on rich edge objects
   const outgoing = {}
   for (const [relType, targets] of Object.entries(entity.relationships || {})) {
-    const ids = Array.isArray(targets) ? targets : [targets]
-    outgoing[relType] = ids
-      .map(tid => {
-        const e = graph.entities[tid]
-        return e ? { id: tid, name: e.name || tid, type: e['@type'] || '?' } : { id: tid }
+    const raw = Array.isArray(targets) ? targets : [targets]
+    outgoing[relType] = raw
+      .map(t => {
+        const resolved = resolveTarget(t)
+        if (!resolved) return null
+        const e = graph.entities[resolved.id]
+        const entry = { id: resolved.id, name: e?.name || resolved.id, type: e?.['@type'] || '?' }
+        if (resolved.validFrom)     entry.validFrom     = resolved.validFrom
+        if (resolved.validUntil)    entry.validUntil    = resolved.validUntil
+        if (resolved.assertionType && resolved.assertionType !== 'explicit') entry.assertionType = resolved.assertionType
+        return entry
       })
       .filter(Boolean)
   }
@@ -191,9 +213,14 @@ function enrichWithContext(result, graph) {
     const backEntity = graph.entities[backId]
     if (!backEntity) continue
     for (const [relType, targets] of Object.entries(backEntity.relationships || {})) {
-      const ids = Array.isArray(targets) ? targets : [targets]
-      if (ids.includes(id)) {
-        incoming.push({ id: backId, name: backEntity.name || backId, type: backEntity['@type'] || '?', relType })
+      const raw = Array.isArray(targets) ? targets : [targets]
+      const match = raw.find(t => relTargetId(t) === id)
+      if (match) {
+        const resolved = resolveTarget(match)
+        const entry = { id: backId, name: backEntity.name || backId, type: backEntity['@type'] || '?', relType }
+        if (resolved?.validFrom)  entry.validFrom  = resolved.validFrom
+        if (resolved?.validUntil) entry.validUntil = resolved.validUntil
+        incoming.push(entry)
       }
     }
   }
@@ -226,16 +253,17 @@ function truncate(str, n = 80) {
   return str.length > n ? str.slice(0, n - 1) + '…' : str
 }
 
-function formatHuman(results, { query, tag, type, depth }) {
-  const qualifier = query ? `"${query}"` : tag ? `tag:${tag}` : type ? `type:${type}` : '(all)'
-  const depthNote = depth > 0 ? ` (depth ${depth})` : ''
+function formatHuman(results, { query, tag, type, depth, active, asOf }) {
+  const qualifier  = query ? `"${query}"` : tag ? `tag:${tag}` : type ? `type:${type}` : '(all)'
+  const depthNote  = depth > 0 ? ` (depth ${depth})` : ''
+  const activeNote = active ? ` [active as of ${asOf || 'today'}]` : ''
 
   if (results.length === 0) {
-    console.log(`\n  No results for ${qualifier}\n`)
+    console.log(`\n  No results for ${qualifier}${activeNote}\n`)
     return
   }
 
-  console.log(`\n  ${results.length} result${results.length === 1 ? '' : 's'} for ${qualifier}${depthNote}\n`)
+  console.log(`\n  ${results.length} result${results.length === 1 ? '' : 's'} for ${qualifier}${depthNote}${activeNote}\n`)
 
   for (const { entity, hops } of results) {
     const hopNote = hops > 0 ? `  ·  hop:${hops}` : ''
@@ -261,7 +289,7 @@ function formatHuman(results, { query, tag, type, depth }) {
 
 async function main() {
   const args = minimist(process.argv.slice(3), { // slice(3): strip 'grim oracle'
-    boolean: ['json', 'list-tags', 'list-types', 'list-ontology', 'suggest-tags'],
+    boolean: ['json', 'list-tags', 'list-types', 'list-ontology', 'suggest-tags', 'active'],
     alias:   { j: 'json', d: 'depth', t: 'tag', l: 'limit' },
     default: { depth: 0, limit: 20 }
   })
@@ -338,10 +366,12 @@ async function main() {
   const query = args._.join(' ').trim() || null
   const opts  = {
     query,
-    tag:   args.tag   || null,
-    type:  args.type  || null,
-    depth: Number(args.depth),
-    limit: Number(args.limit),
+    tag:    args.tag    || null,
+    type:   args.type   || null,
+    depth:  Number(args.depth),
+    limit:  Number(args.limit),
+    active: args.active || false,
+    asOf:   args['as-of'] || undefined,
   }
 
   if (!opts.query && !opts.tag && !opts.type) {
@@ -350,6 +380,8 @@ async function main() {
     console.error('       grim oracle --type <type>')
     console.error('       grim oracle --list-tags')
     console.error('       grim oracle --list-types')
+    console.error('       grim oracle <query> --depth 2 --active           (active edges only)')
+    console.error('       grim oracle <query> --depth 2 --active --as-of 2023-01-01')
     process.exit(1)
   }
 

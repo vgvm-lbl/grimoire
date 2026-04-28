@@ -75,25 +75,19 @@ Note what exists and what connections would improve the KB.
 
 ---
 
-## Phase 3.5 — Council Review (optional but recommended)
+## Phase 3.5 — Council Review
 
-Before Q&A, run the Council on the synthesis. This challenges the Ollama output with five adversarial expert voices and surfaces disagreements worth investigating.
+**This now runs automatically as part of `--dig` and `--synth`.** No manual step needed.
 
+The Council (5 Ollama experts in parallel) reviews the synthesis and writes `council.md` alongside `final.md`. It adds ~2-3 minutes to the dig.
+
+Read `council.md` before forming Q&A questions. The **HOTTEST CONFLICT** and **THE UNCOMFORTABLE QUESTION** sections are prime Q&A material — the Council surfaces tensions the synthesis glossed over.
+
+If the dig already ran without a council pass, you can run it standalone:
 ```bash
-grim council "Review this archaeology synthesis and find what it missed, got wrong, or glossed over" \
-  --file {outDir}/final.md
+grim council "Archaeology review: '{name}' — what's most worth keeping in the KB and what should be questioned?" \
+  --file {outDir}/final.md 2>&1 | tee {outDir}/council.md
 ```
-
-Save the output to `council.md`:
-```bash
-grim council "..." --file {outDir}/final.md --json > {outDir}/council.json
-# or pipe the human output:
-grim council "..." --file {outDir}/final.md 2>&1 | tee {outDir}/council.md
-```
-
-Read `council.md` before forming Q&A questions. The **HOTTEST CONFLICT** and **THE UNCOMFORTABLE QUESTION** sections are prime Q&A material — the Council often surfaces tensions the synthesis glossed over.
-
-Skip this phase if the repo is small/simple or you're in a hurry. It adds ~3 minutes.
 
 ---
 

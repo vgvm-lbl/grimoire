@@ -82,9 +82,9 @@ module.exports = { think }
 
 if (require.main === module) {
   const args = minimist(process.argv.slice(2), {
-    boolean: ['deep', 'write', 'json'],
+    boolean: ['deep', 'write', 'json', 'background'],
     string:  ['context', 'persona'],
-    default: { persona: 'gm', deep: false, write: false, json: false, timeout: 120000 },
+    default: { persona: 'gm', deep: false, write: false, json: false, background: false, timeout: 120000 },
   })
 
   // Strip the 'think' subcommand if called via grim dispatcher
@@ -92,8 +92,28 @@ if (require.main === module) {
   const question = questionParts.join(' ').trim()
 
   if (!question) {
-    console.error('Usage: grim think "<question>" [--context "<search query>"] [--deep] [--write] [--persona gm|oracle|crawler|glitch]')
+    console.error('Usage: grim think "<question>" [--context "<search query>"] [--deep] [--write] [--background] [--persona gm|oracle|crawler|glitch]')
     process.exit(1)
+  }
+
+  // Fire-and-forget: spawn a detached child with --write, return immediately
+  if (args.background) {
+    const { spawn } = require('node:child_process')
+    const childArgs = process.argv.slice(2).filter(a => a !== '--background')
+    if (!childArgs.includes('--write')) childArgs.push('--write')
+
+    const child = spawn(process.execPath, [__filename, ...childArgs], {
+      detached: true,
+      stdio:    'ignore',
+      env:      process.env,
+    })
+    child.unref()
+
+    const preview = question.length > 70 ? question.slice(0, 70) + '...' : question
+    console.log(`→ thinking in background`)
+    console.log(`  "${preview}"`)
+    console.log(`  result → noise floor when done`)
+    process.exit(0)
   }
 
   async function main() {
