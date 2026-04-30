@@ -45,6 +45,7 @@ const extractEntities = (...a) => ner().extractEntities(...a)
 const SKIP_DIRS = new Set([
   'node_modules', '.git', '__pycache__', '.venv', 'venv', 'dist', 'build',
   '.tox', 'coverage', '.nyc_output', 'vendor', 'target', '.next', '.nuxt',
+  'addons', 'assets', 'android', 'export',
 ])
 
 const CODE_EXTS = new Set([
@@ -53,7 +54,10 @@ const CODE_EXTS = new Set([
   '.java', '.php', '.sh', '.bash', '.lua', '.sql',
   '.glsl', '.vert', '.frag', '.wgsl', '.hlsl',
   '.cs', '.swift', '.kt', '.scala', '.ex', '.exs', '.erl',
+  '.gd', '.gdshader',
 ])
+
+const PROSE_EXTS = new Set(['.md', '.txt', '.rst'])
 
 const CONFIG_NAMES = new Set([
   'package.json', 'pyproject.toml', 'setup.py', 'Makefile', 'makefile',
@@ -63,6 +67,7 @@ const CONFIG_NAMES = new Set([
 const SKIP_NAMES = /(?:[-.]min\.|\.bundle\.|\.generated\.|\.d\.ts$|lock\.json$|yarn\.lock$|package-lock\.json$)/i
 
 const MAX_FILE_LINES = 500
+const MAX_PROSE_LINES = 5000
 const MAX_FILES_PER_PASS = 25
 
 // ── Language detection (legacy) ───────────────────────────────────────────────
@@ -141,9 +146,10 @@ function gitLog(dir) {
   } catch { return '' }
 }
 
-function treeOutput(dir, depth = 2) {
+function treeOutput(dir, depth = 2, skipDirs = SKIP_DIRS) {
   try {
-    return execSync(`find . -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/__pycache__/*' -maxdepth ${depth} | sort | head -60`, {
+    const pruneArgs = [...skipDirs].map(d => `-not -path '*/${d}/*'`).join(' ')
+    return execSync(`find . ${pruneArgs} -maxdepth ${depth} | sort | head -60`, {
       cwd: dir, stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf8', timeout: 5000,
     }).trim()
   } catch { return '' }
@@ -183,7 +189,7 @@ function detectEra(dir) {
 
 // ── File collection ───────────────────────────────────────────────────────────
 
-function collectInterestingFiles(dir, max = MAX_FILES_PER_PASS) {
+function collectInterestingFiles(dir, max = MAX_FILES_PER_PASS, skipDirs = SKIP_DIRS) {
   const results = []
 
   function walk(d, depth = 0) {
@@ -193,21 +199,23 @@ function collectInterestingFiles(dir, max = MAX_FILES_PER_PASS) {
 
     // Files first, dirs second — prefer files closer to root
     const files = entries.filter(e => e.isFile())
-    const dirs  = entries.filter(e => e.isDirectory() && !SKIP_DIRS.has(e.name))
+    const dirs  = entries.filter(e => e.isDirectory() && !skipDirs.has(e.name))
 
     for (const e of files) {
       if (results.length >= max) return
       const base = e.name
       const ext  = path.extname(base).toLowerCase()
       if (SKIP_NAMES.test(base)) continue
-      if (!CODE_EXTS.has(ext) && !CONFIG_NAMES.has(base)) continue
+      const isProse = PROSE_EXTS.has(ext)
+      if (!isProse && !CODE_EXTS.has(ext) && !CONFIG_NAMES.has(base)) continue
 
       const fullPath = path.join(d, base)
       let content
       try { content = fs.readFileSync(fullPath, 'utf8') } catch { continue }
 
       const lines = content.split('\n').length
-      if (lines > MAX_FILE_LINES) continue
+      const limit = isProse ? MAX_PROSE_LINES : MAX_FILE_LINES
+      if (lines > limit) continue
 
       results.push({
         path:    fullPath,
@@ -308,7 +316,7 @@ ${fileSection}`
 // ── Pass runners ──────────────────────────────────────────────────────────────
 
 async function runOverview(projectDir, opts = {}) {
-  const { hints = '' } = opts
+  const { hints = '', skipDirs = SKIP_DIRS } = opts
   const name   = path.basename(path.resolve(projectDir))
   const era    = detectEra(projectDir)
   const out    = archDir(projectDir)
@@ -319,7 +327,7 @@ async function runOverview(projectDir, opts = {}) {
   const prompt = buildOverviewPrompt(
     name, projectDir, era,
     gitLog(projectDir),
-    treeOutput(projectDir),
+    treeOutput(projectDir, 2, skipDirs),
     readmeLike(projectDir),
     hints,
   )
@@ -334,6 +342,7 @@ async function runOverview(projectDir, opts = {}) {
 }
 
 async function runFilePass(projectDir, opts = {}) {
+  const { skipDirs = SKIP_DIRS } = opts
   const name   = path.basename(path.resolve(projectDir))
   const out    = archDir(projectDir)
   const filesDir = path.join(out, 'files')
@@ -347,7 +356,7 @@ async function runFilePass(projectDir, opts = {}) {
 
   const system = `${ARCH_SYSTEM}\n\nProject context:\n${overviewCtx}`
 
-  const files = collectInterestingFiles(projectDir)
+  const files = collectInterestingFiles(projectDir, MAX_FILES_PER_PASS, skipDirs)
   console.log(`  [2/3] Per-file pass — ${files.length} files`)
 
   const results = []
@@ -758,8 +767,12 @@ async function main() {
   const args = minimist(process.argv.slice(argOffset), {
     boolean: ['dry-run', 'verbose', 'scaffold-only', 'no-goals', 'json', 'backlog'],
     alias:   { v: 'verbose', n: 'dry-run', j: 'json', b: 'backlog' },
-    string:  ['source', 'dig', 'overview', 'files', 'synth', 'hints'],
+    string:  ['source', 'dig', 'overview', 'files', 'synth', 'hints', 'skip'],
   })
+
+  const skipDirs = args.skip
+    ? new Set([...SKIP_DIRS, ...args.skip.split(',').map(s => s.trim()).filter(Boolean)])
+    : SKIP_DIRS
 
   // ── Backlog ──
   if (args.backlog) return showBacklog()
@@ -768,7 +781,7 @@ async function main() {
   if (args.dig || args.overview || args.files || args.synth) {
     const target = args.dig || args.overview || args.files || args.synth
     if (!fs.existsSync(target)) { console.error(`Not found: ${target}`); process.exit(1) }
-    const opts = { hints: args.hints || '' }
+    const opts = { hints: args.hints || '', skipDirs }
 
     if (args.dig)      return runDig(target, opts)
     if (args.overview) return runOverview(target, opts)
@@ -784,7 +797,7 @@ async function main() {
   const source = args.source || (args._[0] && fs.existsSync(args._[0]) ? args._[0] : null)
   if (!source) {
     console.error('Usage:')
-    console.error('  grim archaeologist --dig <path> [--hints "..."]   Deep dig (Ollama pipeline)')
+    console.error('  grim archaeologist --dig <path> [--hints "..."] [--skip "dir1,dir2"]   Deep dig')
     console.error('  grim archaeologist --backlog                       Show pending KB passes')
     console.error('  grim archaeologist --source <dir>                  Bulk catalog')
     console.error('')
