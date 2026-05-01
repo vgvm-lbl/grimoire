@@ -489,6 +489,58 @@ async function runFileDig(filePath, opts = {}) {
   return { name: rel, final: analysis, outDir: out }
 }
 
+async function analyzeOneFile(filePath) {
+  const abs  = path.resolve(filePath)
+  const rel  = path.basename(abs)
+  const ext  = path.extname(rel).toLowerCase()
+  if (IMAGE_EXTS.has(ext)) {
+    const b64 = fs.readFileSync(abs).toString('base64')
+    return { rel, analysis: await ask({ prompt: buildImagePrompt(rel), task: 'vision', images: [b64], timeout: 120000 }) }
+  }
+  const content = fs.readFileSync(abs, 'utf8')
+  return { rel, analysis: await ask({ prompt: buildFilePrompt(rel, content, content.split('\n').length), system: ARCH_SYSTEM, task: 'linking', timeout: 120000 }) }
+}
+
+async function runMultiFileDig(files, opts = {}) {
+  const parentDir = path.dirname(path.resolve(files[0]))
+  const name      = path.basename(parentDir)
+  const out       = archDir(parentDir)
+  const filesDir  = path.join(out, 'files')
+  ensureDir(filesDir)
+
+  console.log(`\n  ⛏  Multi-file dig — ${files.length} files from ${name}\n`)
+
+  // Per-file pass
+  const results = []
+  for (const filePath of files) {
+    process.stdout.write(`       ${path.basename(filePath)} ...`)
+    const { rel, analysis } = await analyzeOneFile(filePath)
+    const safeRel = rel.replace(/[/\\]/g, '__').replace(/[^a-z0-9._-]/gi, '_')
+    fs.writeFileSync(path.join(filesDir, `${safeRel}.md`), `# ${rel}\n\n${analysis}\n`, 'utf8')
+    process.stdout.write(` ✓\n`)
+    results.push({ rel, analysis })
+  }
+
+  // Stub overview so runSynthesis can proceed
+  const overviewPath = path.join(out, 'overview.md')
+  if (!fs.existsSync(overviewPath)) {
+    fs.writeFileSync(overviewPath, `# ${name} — Overview\n\nCollection of ${files.length} files: ${files.map(f => path.basename(f)).join(', ')}\n`, 'utf8')
+  }
+
+  const result = await runSynthesis(parentDir, opts)
+  await runCouncilReview(name, result.outDir)
+  await pushArtifacts(result.outDir, slug(name))
+
+  const host = process.env.GRIMOIRE_HOST
+  if (host) {
+    console.log(`\n  ✓ Dig complete + pushed to ${host}\n`)
+  } else {
+    console.log(`\n  ✓ Dig complete. Read the synthesis:\n    ${path.join(out, 'final.md')}\n`)
+  }
+  console.log(`  Next: /archaeologist reads final.md, asks Q&A, writes KB entities\n`)
+  return result
+}
+
 async function runDig(projectDir, opts = {}) {
   // Single file — skip the full pipeline
   if (fs.statSync(projectDir).isFile()) return runFileDig(projectDir, opts)
@@ -816,7 +868,12 @@ async function main() {
     if (!fs.existsSync(target)) { console.error(`Not found: ${target}`); process.exit(1) }
     const opts = { hints: args.hints || '', skipDirs }
 
-    if (args.dig)      return runDig(target, opts)
+    if (args.dig) {
+      // Collect any glob-expanded extra files from positional args
+      const extras = args._.filter(p => fs.existsSync(p) && fs.statSync(p).isFile())
+      if (extras.length > 0) return runMultiFileDig([target, ...extras], opts)
+      return runDig(target, opts)
+    }
     if (args.overview) return runOverview(target, opts)
     if (args.files)    return runFilePass(target, opts)
     if (args.synth) {
