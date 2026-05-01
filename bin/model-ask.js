@@ -254,7 +254,7 @@ async function buildRouteTable() {
 
 // ── ask() ─────────────────────────────────────────────────────────────────────
 
-async function ask({ prompt, task = 'default', model, system, json = false, timeout = 120000 }) {
+async function ask({ prompt, task = 'default', model, system, json = false, timeout = 120000, images }) {
   let resolved
   if (model) {
     const profile = profileFor(model)
@@ -266,7 +266,8 @@ async function ask({ prompt, task = 'default', model, system, json = false, time
   const { model: resolvedModel, thinking: isThinking } = resolved
 
   const body = { prompt, model: resolvedModel, stream: false }
-  if (system) body.system = system
+  if (system)  body.system = system
+  if (images?.length) body.images = images
 
   if (json && isThinking) {
     body.prompt = prompt + '\n\nRespond with valid JSON only. No markdown, no prose.'
