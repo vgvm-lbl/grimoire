@@ -853,6 +853,7 @@ async function main() {
     boolean: ['dry-run', 'verbose', 'scaffold-only', 'no-goals', 'json', 'backlog'],
     alias:   { v: 'verbose', n: 'dry-run', j: 'json', b: 'backlog' },
     string:  ['source', 'dig', 'overview', 'files', 'synth', 'hints', 'skip'],
+    alias:   { hint: 'hints' },
   })
 
   const skipDirs = args.skip
@@ -875,7 +876,10 @@ async function main() {
       return runDig(target, opts)
     }
     if (args.overview) return runOverview(target, opts)
-    if (args.files)    return runFilePass(target, opts)
+    if (args.files) {
+      if (fs.statSync(target).isFile()) return runFileDig(target, opts)
+      return runFilePass(target, opts)
+    }
     if (args.synth) {
       const r = await runSynthesis(target, opts)
       await runCouncilReview(path.basename(path.resolve(target)), r.outDir)
